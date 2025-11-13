@@ -49,4 +49,4 @@ The dataset is organized into 3 folders (train, test, val) and contains subfolde
 
 **2.HAM10000 Dermatoscopic**
 The HAM10000 dataset, a large collection of multi-source dermatoscopic images of common pigmented skin lesions.
-<img width="1049" height="706" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img2.png>
+<img width="1049" height="706" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img2.png" />
