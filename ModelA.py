@@ -83,19 +83,7 @@ class _DenseBlock(nn.Module):
 
 
 class DenseNet(nn.Module):
-    r"""Densenet-BC model class, based on
-    `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`
-    Args:
-        growth_rate (int) - how many filters to add each layer (`k` in paper)
-        block_config (list of 3 or 4 ints) - how many layers in each pooling block
-        num_init_features (int) - the number of filters to learn in the first convolution layer
-        bn_size (int) - multiplicative factor for number of bottle neck layers
-            (i.e. bn_size * k features in the bottleneck layer)
-        drop_rate (float) - dropout rate after each dense layer
-        num_classes (int) - number of classification classes
-        small_inputs (bool) - set to True if images are 32x32. Otherwise assumes images are larger.
-        efficient (bool) - set to True to use checkpointing. Much more memory efficient, but slower.
-    """
+    
     def __init__(self, growth_rate=12, block_config=(16, 16, 16), compression=0.5,
                  num_init_features=24, bn_size=4, drop_rate=0,
                  num_classes=10, small_inputs=True, efficient=False):
@@ -164,7 +152,7 @@ class DenseNet(nn.Module):
     
 model = DenseNet(
     growth_rate=32,           # k in the paper
-    block_config=(6, 12, 24, 16),  # DenseNet-121 config
+    block_config=(6, 12, 48, 32),  # DenseNet-121 config
     num_init_features=64,
     bn_size=4,                # bottleneck multiplier
     drop_rate=0.2,            # dropout for regularization

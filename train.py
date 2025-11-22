@@ -12,7 +12,7 @@ from datetime import datetime
 from tqdm import tqdm
 from typing import Dict, Tuple
 
-from models import build_model, get_model_summary
+from ModelB import build_model, get_model_summary
 from image_preprocessing import get_data_loaders, get_dataset_statistics
 
 
