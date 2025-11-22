@@ -11,3 +11,5 @@ scikit-learn>=1.3.0
 tqdm>=4.66.0
 requests>=2.31.0
 opencv-python
+image-utils
+torchinfo
