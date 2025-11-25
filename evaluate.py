@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from models import build_model
+from ModelB import build_model
 from image_preprocessing import get_data_loaders
 
 

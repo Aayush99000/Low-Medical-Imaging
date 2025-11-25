@@ -124,6 +124,7 @@ data = ChestXrayDataset(
     dataset_root="/Users/aayushkatoch/Desktop/DS_project/chest_xray_pheumonia/chest_xray",
     split="train")
 print(f"Dataset size: {len(data)}")
+# Visualize some samples
 fig, axes = plt.subplots(1, 4, figsize=(20, 4))
 for i in range(5):
     img, label = data[i]
@@ -147,125 +148,101 @@ plt.tight_layout()
 plt.show()
 
 
+"""
+Load the fixed subset for training.
+Use this script every time you want to train with the same subset.
+"""
 
-# def get_data_loaders(dataset_root: str,
-#                      batch_size: int = 32,
-#                      image_size: Tuple[int, int] = (224, 224),
-#                      num_workers: int = 4,
-#                      augmentation_strength: float = 0.5) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
-#     # Training set with augmentation
-#     train_dataset = ChestXrayDataset(
-#         dataset_root=dataset_root,
-#         split="train",
-#         image_size=image_size,
-#         augment=True,
-#         normalize=True,
-#         augmentation_strength=augmentation_strength
-#     )
-#     train_loader = DataLoader(
-#         train_dataset,
-#         batch_size=batch_size,
-#         shuffle=True,
-#         num_workers=num_workers,
-#         pin_memory=True
-#     )
-    
-#     # Validation set without augmentation
-#     val_loader = None
-#     if os.path.exists(os.path.join(dataset_root, "val")):
-#         val_dataset = ChestXrayDataset(
-#             dataset_root=dataset_root,
-#             split="val",
-#             image_size=image_size,
-#             augment=False,
-#             normalize=True,
-#             augmentation_strength=0
-#         )
-#         val_loader = DataLoader(
-#             val_dataset,
-#             batch_size=batch_size,
-#             shuffle=False,
-#             num_workers=num_workers,
-#             pin_memory=True
-#         )
-    
-#     # Test set without augmentation
-#     test_loader = None
-#     if os.path.exists(os.path.join(dataset_root, "test")):
-#         test_dataset = ChestXrayDataset(
-#             dataset_root=dataset_root,
-#             split="test",
-#             image_size=image_size,
-#             augment=False,
-#             normalize=True,
-#             augmentation_strength=0
-#         )
-#         test_loader = DataLoader(
-#             test_dataset,
-#             batch_size=batch_size,
-#             shuffle=False,
-#             num_workers=num_workers,
-#             pin_memory=True
-#         )
-    
-#     return train_loader, val_loader, test_loader
+import torch
+from torch.utils.data import DataLoader
+from dataset import ChestXrayDataset  # Import your dataset class
+from subset_utils import load_subset_from_indices, verify_subset
 
+# Configuration
+DATA_ROOT = '/kaggle/input/chest-xray-pneumonia/chest_xray'
+SUBSET_PATH = 'train_subset_300_seed42.json'
+BATCH_SIZE = 32
 
-# def get_dataset_statistics(dataset_root: str) -> Dict[str, int]:
-#     stats = {}
-#     label_map = {"Normal": 0, "Pneumonia": 1}
+def main():
+    print("Loading datasets...")
     
-#     for split in ["train", "val", "test"]:
-#         split_path = os.path.join(dataset_root, split)
-#         if not os.path.exists(split_path):
-#             continue
-        
-#         for label in label_map.keys():
-#             label_path = os.path.join(split_path, label)
-#             if os.path.exists(label_path):
-#                 count = len([f for f in os.listdir(label_path) if f.lower().endswith(('.jpeg', '.jpg', '.png'))])
-#                 stats[f"{split}_{label}"] = count
+    # Load full training dataset
+    full_train_dataset = ChestXrayDataset(
+        dataset_root=DATA_ROOT,
+        split='train',
+        image_size=(224, 224),
+        augment=True,
+        normalize=True
+    )
     
-#     return stats
+    # Load validation dataset
+    val_dataset = ChestXrayDataset(
+        dataset_root=DATA_ROOT,
+        split='val',
+        image_size=(224, 224),
+        augment=False,
+        normalize=True
+    )
+    
+    # Load test dataset
+    test_dataset = ChestXrayDataset(
+        dataset_root=DATA_ROOT,
+        split='test',
+        image_size=(224, 224),
+        augment=False,
+        normalize=True
+    )
+    
+    # Load the fixed subset
+    train_subset = load_subset_from_indices(
+        dataset=full_train_dataset,
+        indices_path=SUBSET_PATH
+    )
+    
+    # Verify subset
+    verify_subset(full_train_dataset, train_subset, SUBSET_PATH)
+    
+    # Create DataLoaders
+    train_loader = DataLoader(
+        train_subset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=2,
+        pin_memory=True
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True
+    )
+    
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True
+    )
+    
+    print(f"\n{'='*60}")
+    print("DATALOADERS READY")
+    print(f"{'='*60}")
+    print(f"Train: {len(train_subset)} images ({len(train_loader)} batches)")
+    print(f"Val: {len(val_dataset)} images ({len(val_loader)} batches)")
+    print(f"Test: {len(test_dataset)} images ({len(test_loader)} batches)")
+    print(f"{'='*60}\n")
+    
+    return train_loader, val_loader, test_loader
 
+if __name__ == '__main__':
+    train_loader, val_loader, test_loader = main()
+    
+    # Test by loading one batch
+    images, labels = next(iter(train_loader))
+    print(f"Batch images shape: {images.shape}")
+    print(f"Batch labels shape: {labels.shape}")
+    print(f"\n✓ Ready for training!")
 
-# def visualize_batch(images: torch.Tensor, labels: torch.Tensor, 
-#                    num_samples: int = 4, normalize_back: bool = True):
-#     num_samples = min(num_samples, len(images))
-#     fig, axes = plt.subplots(1, num_samples, figsize=(15, 4))
-#     label_names = {0: "Normal", 1: "Pneumonia"}
-    
-#     # ImageNet normalization stats
-#     mean = np.array([0.485, 0.456, 0.406])
-#     std = np.array([0.229, 0.224, 0.225])
-    
-#     for i in range(num_samples):
-#         ax = axes[i] if num_samples > 1 else axes
-#         img = images[i].cpu().numpy()
-        
-#         # Denormalize if needed
-#         if normalize_back:
-#             img = img.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
-#             img = (img * std) + mean
-#             img = np.clip(img, 0, 1)
-#         else:
-#             img = img.transpose(1, 2, 0)
-        
-#         ax.imshow(img)
-#         ax.set_title(f"Label: {label_names[int(labels[i].item())]}")
-#         ax.axis('off')
-    
-#     plt.tight_layout()
-#     plt.show()
-
-
-# def denormalize_image(img: torch.Tensor) -> np.ndarray:
-#     mean = np.array([0.485, 0.456, 0.406])
-#     std = np.array([0.229, 0.224, 0.225])
-    
-#     img_np = img.cpu().numpy()
-#     img_np = img_np.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
-#     img_np = (img_np * std) + mean
-#     img_np = np.clip(img_np, 0, 1)
-    
-#     return img_np

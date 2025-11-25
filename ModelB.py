@@ -6,27 +6,18 @@ from typing import Dict, Optional
 
 
 class TransferLearningModel(nn.Module):
-    """Base class for transfer learning models with flexible architecture."""
     
     def __init__(self, 
                  base_model: nn.Module,
                  num_classes: int = 2,
                  hidden_size: int = 512,
                  dropout_rate: float = 0.5):
-        """Initialize TransferLearningModel.
         
-        Args:
-            base_model: Pretrained base model.
-            num_classes: Number of output classes.
-            hidden_size: Size of hidden layers in classification head.
-            dropout_rate: Dropout rate for regularization.
-        """
         super(TransferLearningModel, self).__init__()
         self.base_model = base_model
         self.num_classes = num_classes
         
         # Get the input size for the classification head
-        # by doing a dummy forward pass
         self._in_features = None
         self._get_input_features()
         
@@ -46,7 +37,6 @@ class TransferLearningModel(nn.Module):
         )
     
     def _get_input_features(self):
-        """Infer input feature size from base model."""
         if hasattr(self.base_model, 'fc'):
             # ResNet, VGG
             self._in_features = self.base_model.fc.in_features
@@ -86,11 +76,7 @@ class TransferLearningModel(nn.Module):
         print("Base model parameters unfrozen.")
     
     def unfreeze_last_n_layers(self, n_layers: int):
-        """Unfreeze the last N layers of the base model.
-        
-        Args:
-            n_layers: Number of layers to unfreeze from the end.
-        """
+
         # First freeze all
         self.freeze_base_model()
         
@@ -107,18 +93,6 @@ def build_vgg19(num_classes: int = 2,
                 freeze_base: bool = True,
                 hidden_size: int = 512,
                 dropout_rate: float = 0.5) -> TransferLearningModel:
-    """Build VGG19 transfer learning model.
-    
-    Args:
-        num_classes: Number of output classes.
-        pretrained: Whether to use pretrained weights.
-        freeze_base: Whether to freeze base model initially.
-        hidden_size: Size of hidden layers.
-        dropout_rate: Dropout rate.
-    
-    Returns:
-        TransferLearningModel instance.
-    """
     base_model = models.vgg19(pretrained=pretrained)
     
     # Remove the original classifier
@@ -142,18 +116,6 @@ def build_resnet50(num_classes: int = 2,
                    freeze_base: bool = True,
                    hidden_size: int = 512,
                    dropout_rate: float = 0.5) -> TransferLearningModel:
-    """Build ResNet50 transfer learning model.
-    
-    Args:
-        num_classes: Number of output classes.
-        pretrained: Whether to use pretrained weights.
-        freeze_base: Whether to freeze base model initially.
-        hidden_size: Size of hidden layers.
-        dropout_rate: Dropout rate.
-    
-    Returns:
-        TransferLearningModel instance.
-    """
     base_model = models.resnet50(pretrained=pretrained)
     
     # Remove the original classifier
@@ -177,18 +139,6 @@ def build_inceptionv3(num_classes: int = 2,
                       freeze_base: bool = True,
                       hidden_size: int = 512,
                       dropout_rate: float = 0.5) -> TransferLearningModel:
-    """Build InceptionV3 transfer learning model.
-    
-    Args:
-        num_classes: Number of output classes.
-        pretrained: Whether to use pretrained weights.
-        freeze_base: Whether to freeze base model initially.
-        hidden_size: Size of hidden layers.
-        dropout_rate: Dropout rate.
-    
-    Returns:
-        TransferLearningModel instance.
-    """
     base_model = models.inception_v3(pretrained=pretrained, aux_logits=False)
     
     # Remove the original classifier
@@ -212,18 +162,7 @@ def build_densenet121(num_classes: int = 2,
                       freeze_base: bool = True,
                       hidden_size: int = 512,
                       dropout_rate: float = 0.5) -> TransferLearningModel:
-    """Build DenseNet121 transfer learning model.
-    
-    Args:
-        num_classes: Number of output classes.
-        pretrained: Whether to use pretrained weights.
-        freeze_base: Whether to freeze base model initially.
-        hidden_size: Size of hidden layers.
-        dropout_rate: Dropout rate.
-    
-    Returns:
-        TransferLearningModel instance.
-    """
+
     base_model = models.densenet121(pretrained=pretrained)
     
     # Remove the original classifier
@@ -248,22 +187,7 @@ def build_model(model_name: str = "vgg19",
                 freeze_base: bool = True,
                 hidden_size: int = 512,
                 dropout_rate: float = 0.5) -> TransferLearningModel:
-    """Factory function to build any available transfer learning model.
-    
-    Args:
-        model_name: Name of model ("vgg19", "resnet50", "inceptionv3", "densenet121").
-        num_classes: Number of output classes.
-        pretrained: Whether to use pretrained weights.
-        freeze_base: Whether to freeze base model initially.
-        hidden_size: Size of hidden layers.
-        dropout_rate: Dropout rate.
-    
-    Returns:
-        TransferLearningModel instance.
-    
-    Raises:
-        ValueError: If model_name is not recognized.
-    """
+ 
     model_name = model_name.lower()
     
     models_dict = {
@@ -286,11 +210,7 @@ def build_model(model_name: str = "vgg19",
 
 
 def get_model_summary(model: nn.Module):
-    """Print a summary of model architecture and parameters.
-    
-    Args:
-        model: PyTorch model.
-    """
+ 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
