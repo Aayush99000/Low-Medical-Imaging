@@ -51,6 +51,10 @@ The dataset is organized into 3 folders (train, test, val) and contains subfolde
 The HAM10000 dataset, a large collection of multi-source dermatoscopic images of common pigmented skin lesions.
 <img width="1049" height="706" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img2.png" />
 
+**2.CheXpert**
+CheXpert is a large public dataset of 224,000+ chest X-rays from 65,000+ patients collected at Stanford Hospital. The dataset includes labels for 14 thoracic pathologies (including Pneumonia, Edema, Atelectasis, Pleural Effusion, etc.) with four label types: positive, negative, uncertain, and unmentioned. It's widely used for developing and benchmarking automated chest X-ray interpretation models.
+<img width="1049" height="706" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img3.png" />
+
 ## 🛠️ PyTorch Pipeline: Training & Evaluation
 
 This project uses **PyTorch** for building and training transfer learning models. The pipeline consists of:
