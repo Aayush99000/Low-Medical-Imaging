@@ -81,7 +81,7 @@ pip install -r requirements.txt
 
 #### 2. Dataset Structure
 
-Place your dataset in this structure:
+For ChestXray Pheumonia Dataset:
 
 ```
 dataset/
@@ -98,6 +98,87 @@ dataset/
 └── test/
     ├── Normal/
     └── Pneumonia/
+```
+
+For HAM10000 Dataset:
+
+```
+HAM10000/
+├── train/
+│   ├── akiec/
+│   │   ├── image1.jpg
+│   ├── bcc/
+│   │   ├── image1.jpg
+│   ├── bkl/
+│   │   ├── image1.jpg
+│   ├── df/
+│   │   ├── image1.jpg
+│   ├── mel/
+│   │   ├── image1.jpg
+│   ├── nv/
+│   │   ├── image1.jpg
+│   └── vasc/
+│       ├── image1.jpg
+├── val/
+│   ├── akiec/
+│   ├── bcc/
+│   ├── bkl/
+│   ├── df/
+│   ├── mel/
+│   ├── nv/
+│   └── vasc/
+```
+
+For CheXpert Dataset:
+
+```
+CheXpert_Dataset/
+├── train/
+│   ├── Atelectasis/
+│   │   ├── image1.jpg
+│   ├── Cardiomegaly/
+│   │   ├── image1.jpg
+│   ├── Consolidation/
+│   │   ├── image1.jpg
+│   ├── Edema/
+│   │   ├── image1.jpg
+│   ├── Effusion/
+│   │   ├── image1.jpg
+│   ├── Enlarged_Cardiomediastinum/
+│   │   ├── image1.jpg
+│   ├── Fracture/
+│   │   ├── image1.jpg
+│   ├── Lung_Lesion/
+│   │   ├── image1.jpg
+│   ├── Lung_Opacity/
+│   │   ├── image1.jpg
+│   ├── No_Finding/
+│   │   ├── image1.jpg
+│   ├── Pleural_Other/
+│   │   ├── image1.jpg
+│   ├── Pneumonia/
+│   │   ├── image1.jpg
+│   ├── Pneumothorax/
+│   │   ├── image1.jpg
+│   └── Support_Devices/
+│       ├── image1.jpg
+├── valid/
+│   ├── Atelectasis/
+│   ├── Cardiomegaly/
+│   ├── Consolidation/
+│   ├── Edema/
+│   ├── Effusion/
+│   ├── Enlarged_Cardiomediastinum/
+│   ├── Fracture/
+│   ├── Lung_Lesion/
+│   ├── Lung_Opacity/
+│   ├── No_Finding/
+│   ├── Pleural_Other/
+│   ├── Pneumonia/
+│   ├── Pneumothorax/
+│   └── Support_Devices/
+├── train.csv
+└── valid.csv
 ```
 
 #### 3. Train a Model
