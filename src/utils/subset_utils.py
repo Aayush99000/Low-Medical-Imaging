@@ -12,7 +12,6 @@ def _rng(seed: int):
     """Return a numpy Generator for reproducible sampling."""
     return np.random.default_rng(seed)
 
-
 def create_subset_indices(
     dataset,
     subset_size: Optional[int] = None,

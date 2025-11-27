@@ -13,9 +13,6 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from ModelB import build_model
-from image_preprocessing import get_data_loaders
-
 
 class ModelEvaluator:
     """Evaluate PyTorch model on classification tasks."""
@@ -77,9 +74,6 @@ class ModelEvaluator:
             y_true: Ground truth labels.
             y_pred: Predicted labels.
             y_probs: Predicted probabilities.
-        
-        Returns:
-            Dictionary with computed metrics.
         """
         metrics = {
             "accuracy": float(accuracy_score(y_true, y_pred)),
@@ -154,25 +148,7 @@ def evaluate_model(model_path: str,
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict)
     model = model.to(device)
-    
-    print(f"Loading {split} data...")
-    
-    # Create single dataloader for the split
-    from image_preprocessing import ChestXrayDataset
-    dataset = ChestXrayDataset(
-        dataset_root=dataset_root,
-        split=split,
-        image_size=(224, 224),
-        augment=False,
-        normalize=True
-    )
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True
-    )
+
     
     print(f"Evaluating on {split} set ({len(dataset)} images)...")
     evaluator = ModelEvaluator(model, device)
@@ -182,7 +158,7 @@ def evaluate_model(model_path: str,
         "model_name": model_name,
         "model_path": model_path,
         "split": split,
-        "num_samples": len(dataset),
+        "num_samples": len(data),
         "metrics": metrics
     }
     
@@ -282,10 +258,3 @@ if __name__ == "__main__":
         split="test"
     )
     
-    # Example: Compare multiple models
-    # model_paths = {
-    #     "vgg19": "./checkpoints/vgg19_20251120_120000_final.pt",
-    #     "resnet50": "./checkpoints/resnet50_20251120_120000_final.pt",
-    #     "densenet121": "./checkpoints/densenet121_20251120_120000_final.pt"
-    # }
-    # comparison = compare_models(model_paths, dataset_root, split="test")

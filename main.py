@@ -4,19 +4,12 @@ import json
 from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
 from pathlib import Path
+from matplotlib import pyplot as plt
 import torch
 from torch.utils.data import Dataset, DataLoader
 from chest_xray_dataset import ChestXrayDataset
 from chexpert_dataset import CheXpertDataset, getImagesLabels
 from src.utils.subset_utils import create_subset_indices
-
-create_subset_indices(
-    dataset=full_train,
-    subset_size=300,              # or 200, or per_class=N
-    seed=42,                      # FIXED seed = reproducibility
-    save_path="subset_indices_300.json",
-    patient_col=None              # or "patient_id" if you have it
-)
 
 data = ChestXrayDataset(
     dataset_root="/Users/aayushkatoch/Desktop/DS_project/chest_xray_pheumonia/chest_xray",
@@ -44,3 +37,14 @@ for i in range(5):
 
 plt.tight_layout()
 plt.show()
+
+
+create_subset_indices(
+    dataset=data,
+    subset_size=300,              # or 200, or per_class=N
+    seed=42,                      # FIXED seed = reproducibility
+    save_path="subset_indices_300.json",
+    patient_col=None              # or "patient_id" if you have it
+)
+
+

@@ -12,50 +12,53 @@ from datetime import datetime
 from tqdm import tqdm
 from typing import Dict, Tuple
 
-from ModelB import build_model, get_model_summary
-from image_preprocessing import get_data_loaders, get_dataset_statistics
+# from ModelB import build_model, get_model_summary
+# from image_preprocessing import get_data_loaders, get_dataset_statistics
+
+from src.data.chest_xray_dataset import ChestXrayDataset
+from src.utils.subset_utils import load_subset
+from torch.utils.data import 
+
+# try to import dataset + utils from src; if not available, raise clear error
+try:
+    from src.data.chest_xray_dataset import ChestXrayDataset
+except Exception as e:
+    raise ImportError("Could not import ChestXrayDataset from src.data. Make sure src/data/chest_xray_dataset.py exists and src/ is on PYTHONPATH.") from e
+
+try:
+    from src.utils.subset_utils import create_subset_indices, load_subset
+except Exception:
+    # fallback minimal versions if src.utils not present
+    def create_subset_indices(*args, **kwargs):
+        raise ImportError("create_subset_indices not found in src.utils.subset_utils")
+    def load_subset(*args, **kwargs):
+        raise ImportError("load_subset not found in src.utils.subset_utils")
 
 
-class EarlyStopping:
-    """Early stopping callback to prevent overfitting."""
-    
-    def __init__(self, patience: int = 10, verbose: bool = True, delta: float = 0.0):
-        """Initialize EarlyStopping.
-        
-        Args:
-            patience: Number of epochs with no improvement after which training stops.
-            verbose: Whether to print early stopping messages.
-            delta: Minimum change to qualify as an improvement.
-        """
-        self.patience = patience
-        self.verbose = verbose
-        self.delta = delta
-        self.counter = 0
-        self.best_score = None
-        self.early_stop = False
-    
-    def __call__(self, val_loss: float) -> bool:
-        """Check if training should stop.
-        
-        Args:
-            val_loss: Validation loss value.
-        
-        Returns:
-            True if training should stop, False otherwise.
-        """
-        if self.best_score is None:
-            self.best_score = val_loss
-        elif val_loss > self.best_score - self.delta:
-            self.counter += 1
-            if self.verbose:
-                print(f"EarlyStopping counter: {self.counter}/{self.patience}")
-            if self.counter >= self.patience:
-                self.early_stop = True
-        else:
-            self.best_score = val_loss
-            self.counter = 0
-        
-        return self.early_stop
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # deterministic cudnn may slow training
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def train_modelA():
+
+    full_train = ChestXrayDataset(
+        dataset_root="path",
+        split="train",
+        augment=True,
+        normalize=True
+    )
+
+    train_subset = load_subset(
+        full_train,
+        "data/processed/subset_indices_300.json"
+    )
+
+    train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
 
 
 def train_epoch(model: nn.Module, 
@@ -143,217 +146,198 @@ def validate(model: nn.Module,
     return avg_loss, accuracy
 
 
-def train_model(model_name: str,
-                dataset_root: str,
-                epochs: int = 50,
-                batch_size: int = 32,
-                learning_rate: float = 1e-4,
-                freeze_base: bool = True,
-                fine_tune_epochs: int = 10,
-                fine_tune_layers: int = 50,
-                checkpoint_dir: str = "./checkpoints",
-                device: str = "cuda" if torch.cuda.is_available() else "cpu") -> Dict:
-    """Train a transfer learning model on chest X-ray data.
-    
-    Args:
-        model_name: Name of model ("vgg19", "resnet50", "inceptionv3", "densenet121").
-        dataset_root: Root path to dataset.
-        epochs: Number of training epochs.
-        batch_size: Batch size for training.
-        learning_rate: Learning rate for optimizer.
-        freeze_base: Whether to freeze base model initially.
-        fine_tune_epochs: Number of fine-tuning epochs.
-        fine_tune_layers: Number of layers to unfreeze for fine-tuning.
-        checkpoint_dir: Directory to save checkpoints.
-        device: Device to train on ("cuda" or "cpu").
-    
-    Returns:
-        Dictionary with training results.
-    """
-    # Setup
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    device = torch.device(device)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    print(f"Device: {device}")
-    print(f"Dataset root: {dataset_root}")
-    
-    # Dataset statistics
-    stats = get_dataset_statistics(dataset_root)
-    print(f"Dataset statistics: {stats}")
-    
-    # Build model
-    print(f"\nBuilding {model_name}...")
-    model = build_model(
-        model_name=model_name,
-        num_classes=2,
-        pretrained=True,
-        freeze_base=freeze_base,
-        hidden_size=512,
-        dropout_rate=0.5
-    )
-    model = model.to(device)
-    get_model_summary(model)
-    
-    # Data loaders
-    print(f"\nLoading data...")
-    train_loader, val_loader, test_loader = get_data_loaders(
-        dataset_root=dataset_root,
-        batch_size=batch_size,
-        image_size=(224, 224),
-        num_workers=4,
-        augmentation_strength=0.5
-    )
-    
-    # Loss and optimizer
+def train_loop(
+    model,
+    train_loader: DataLoader,
+    val_loader: Optional[DataLoader],
+    device: str,
+    epochs: int,
+    lr: float,
+    out_dir: Path,
+    start_epoch: int = 0,
+    save_every: int = 1
+):
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-7)
-    early_stopping = EarlyStopping(patience=10, verbose=True)
-    
-    # Training history
-    history = {
-        "train_loss": [],
-        "train_acc": [],
-        "val_loss": [],
-        "val_acc": []
+
+    best_val_acc = 0.0
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for epoch in range(start_epoch, epochs):
+        model.train()
+        running_loss = 0.0
+        total = 0
+        correct = 0
+
+        for xb, yb in train_loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+
+            optimizer.zero_grad()
+            logits = model(xb)
+            loss = criterion(logits, yb)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * xb.size(0)
+            preds = torch.argmax(logits, dim=1)
+            correct += (preds == yb).sum().item()
+            total += xb.size(0)
+
+        train_loss = running_loss / max(1, total)
+        train_acc = correct / max(1, total)
+
+        if val_loader is not None:
+            val_acc = evaluate(model, val_loader, device)
+        else:
+            val_acc = 0.0
+
+        print(f"[Epoch {epoch+1}/{epochs}] Train loss: {train_loss:.4f} Train acc: {train_acc:.4f} Val acc: {val_acc:.4f}")
+
+        # save checkpoint
+        if (epoch + 1) % save_every == 0:
+            ckpt_path = out_dir / f"checkpoint_epoch{epoch+1}.pt"
+            torch.save({
+                "epoch": epoch + 1,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "train_loss": train_loss,
+                "train_acc": train_acc,
+                "val_acc": val_acc
+            }, ckpt_path)
+
+        # update best
+        if val_loader is not None and val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_path = out_dir / "best_model.pt"
+            torch.save(model.state_dict(), best_path)
+
+    return best_val_acc
+
+
+def build_dataloaders(
+    dataset_root: str,
+    subset_json: Optional[str],
+    subset_size: Optional[int],
+    batch_size: int,
+    num_workers: int,
+    seed: int,
+    create_subset_if_missing: bool = False
+):
+    """
+    Loads full train dataset, loads (or creates) subset JSON, constructs DataLoaders.
+    Returns: train_loader, val_loader, test_loader, full_train_dataset (useful later)
+    """
+    # instantiate datasets
+    full_train = ChestXrayDataset(dataset_root, split="train", augment=True, normalize=True)
+    val_dataset = ChestXrayDataset(dataset_root, split="val", augment=False, normalize=True)
+    test_dataset = ChestXrayDataset(dataset_root, split="test", augment=False, normalize=True)
+
+    # ensure reproducibility
+    set_seed(seed)
+
+    # load or create subset
+    if subset_json is None:
+        # don't use subset -> use full train
+        train_ds = full_train
+    else:
+        subset_path = Path(subset_json)
+        if not subset_path.exists():
+            if create_subset_if_missing:
+                print(f"Subset JSON not found at {subset_path}. Creating a new subset with size={subset_size} (seed={seed}).")
+                create_subset_indices(full_train, subset_size=subset_size, seed=seed, save_path=str(subset_path))
+            else:
+                raise FileNotFoundError(f"Subset json not found: {subset_path}. Pass --create_subset to auto-create.")
+        # load as a Subset
+        train_ds = load_subset(full_train, str(subset_path))
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+
+    return train_loader, val_loader, test_loader, full_train
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Train DenseNet experiments (Model A scratch / Model B ImageNet TL)")
+    p.add_argument("--model", choices=["A", "B"], required=True, help="A: DenseNet scratch, B: DenseNet ImageNet-pretrained")
+    p.add_argument("--dataset_root", type=str, required=True, help="Path to dataset root (contains train/val/test folders)")
+    p.add_argument("--subset_json", type=str, default="data/processed/subset_indices_300.json", help="Path to subset JSON")
+    p.add_argument("--subset_size", type=int, default=300, help="When creating subset, total images to pick")
+    p.add_argument("--create_subset", action="store_true", help="If set and subset JSON missing, create it from full train set")
+    p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--num_workers", type=int, default=4)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--out_dir", type=str, default="experiments/run")
+    p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print("Arguments:", args)
+
+    # set seeds once
+    set_seed(args.seed)
+
+    # build dataloaders and datasets (this will create the subset JSON if requested)
+    train_loader, val_loader, test_loader, full_train_ds = build_dataloaders(
+        dataset_root=args.dataset_root,
+        subset_json=args.subset_json,
+        subset_size=args.subset_size,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        seed=args.seed,
+        create_subset_if_missing=args.create_subset
+    )
+
+    # build model
+    if args.model == "A":
+        print("Building Model A (DenseNet from scratch)")
+        model = build_densenet(num_classes=2, pretrained=False, device=args.device)
+    else:
+        print("Building Model B (DenseNet pretrained on ImageNet)")
+        model = build_densenet(num_classes=2, pretrained=True, device=args.device)
+
+    # quick sanity check on one batch
+    xb, yb = next(iter(train_loader))
+    print("Sanity batch shapes:", xb.shape, yb.shape)
+
+    # train
+    best_val = train_loop(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=args.device,
+        epochs=args.epochs,
+        lr=args.lr,
+        out_dir=out_dir,
+        save_every=1
+    )
+
+    # final evaluation on test set using best model if exists
+    best_model_path = out_dir / "best_model.pt"
+    if best_model_path.exists():
+        print("Loading best model for final test evaluation.")
+        model.load_state_dict(torch.load(best_model_path, map_location=args.device))
+    test_acc = evaluate(model, test_loader, device=args.device)
+    print(f"Final Test Accuracy: {test_acc:.4f}")
+
+    # write metadata about run
+    run_info = {
+        "args": vars(args),
+        "best_val_acc": best_val,
+        "final_test_acc": float(test_acc)
     }
-    
-    results = {
-        "model_name": model_name,
-        "dataset_stats": stats,
-        "config": {
-            "epochs": epochs,
-            "batch_size": batch_size,
-            "learning_rate": learning_rate,
-            "freeze_base": freeze_base
-        }
-    }
-    
-    # Initial training phase
-    print(f"\n{'='*70}")
-    print(f"Initial Training Phase ({epochs} epochs)")
-    print(f"{'='*70}")
-    
-    for epoch in range(epochs):
-        print(f"\nEpoch [{epoch+1}/{epochs}]")
-        
-        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
-        history["train_loss"].append(train_loss)
-        history["train_acc"].append(train_acc)
-        
-        print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
-        
-        if val_loader:
-            val_loss, val_acc = validate(model, val_loader, criterion, device)
-            history["val_loss"].append(val_loss)
-            history["val_acc"].append(val_acc)
-            print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
-            
-            scheduler.step(val_loss)
-            
-            if early_stopping(val_loss):
-                print(f"Early stopping at epoch {epoch+1}")
-                break
-    
-    results["initial_training"] = {
-        "epochs_trained": len(history["train_loss"]),
-        "final_train_loss": float(history["train_loss"][-1]),
-        "final_train_acc": float(history["train_acc"][-1]),
-        "final_val_loss": float(history["val_loss"][-1]) if history["val_loss"] else None,
-        "final_val_acc": float(history["val_acc"][-1]) if history["val_acc"] else None
-    }
-    
-    # Fine-tuning phase
-    if fine_tune_epochs > 0 and freeze_base:
-        print(f"\n{'='*70}")
-        print(f"Fine-tuning Phase ({fine_tune_epochs} epochs)")
-        print(f"{'='*70}")
-        
-        model.unfreeze_last_n_layers(fine_tune_layers)
-        
-        # Use lower learning rate for fine-tuning
-        fine_tune_lr = learning_rate / 10
-        optimizer = optim.Adam(model.parameters(), lr=fine_tune_lr)
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-8)
-        early_stopping = EarlyStopping(patience=10, verbose=True)
-        
-        ft_history = {
-            "train_loss": [],
-            "train_acc": [],
-            "val_loss": [],
-            "val_acc": []
-        }
-        
-        for epoch in range(fine_tune_epochs):
-            print(f"\nFT Epoch [{epoch+1}/{fine_tune_epochs}]")
-            
-            train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
-            ft_history["train_loss"].append(train_loss)
-            ft_history["train_acc"].append(train_acc)
-            
-            print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
-            
-            if val_loader:
-                val_loss, val_acc = validate(model, val_loader, criterion, device)
-                ft_history["val_loss"].append(val_loss)
-                ft_history["val_acc"].append(val_acc)
-                print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
-                
-                scheduler.step(val_loss)
-                
-                if early_stopping(val_loss):
-                    print(f"Early stopping at fine-tune epoch {epoch+1}")
-                    break
-        
-        results["fine_tuning"] = {
-            "epochs": fine_tune_epochs,
-            "layers_unfrozen": fine_tune_layers,
-            "learning_rate": fine_tune_lr,
-            "epochs_trained": len(ft_history["train_loss"]),
-            "final_train_loss": float(ft_history["train_loss"][-1]),
-            "final_train_acc": float(ft_history["train_acc"][-1]),
-            "final_val_loss": float(ft_history["val_loss"][-1]) if ft_history["val_loss"] else None,
-            "final_val_acc": float(ft_history["val_acc"][-1]) if ft_history["val_acc"] else None
-        }
-    
-    # Save model
-    model_path = os.path.join(checkpoint_dir, f"{model_name}_{timestamp}_final.pt")
-    torch.save(model.state_dict(), model_path)
-    print(f"\nModel saved to {model_path}")
-    results["model_path"] = model_path
-    
-    # Save results
-    results_path = os.path.join(checkpoint_dir, f"{model_name}_{timestamp}_results.json")
-    with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"Results saved to {results_path}")
-    
-    return results
+    with open(out_dir / "run_info.json", "w") as f:
+        json.dump(run_info, f, indent=2)
+    print(f"Run metadata saved to {out_dir / 'run_info.json'}")
 
 
 if __name__ == "__main__":
-    # Example usage
-    dataset_root = "./dataset"  # Update with actual dataset path
-    
-    models_to_train = ["vgg19", "resnet50", "densenet121"]
-    
-    for model_name in models_to_train:
-        print(f"\n{'#'*70}")
-        print(f"# Training {model_name.upper()}")
-        print(f"{'#'*70}\n")
-        
-        results = train_model(
-            model_name=model_name,
-            dataset_root=dataset_root,
-            epochs=30,
-            batch_size=32,
-            learning_rate=1e-4,
-            freeze_base=True,
-            fine_tune_epochs=10,
-            fine_tune_layers=50,
-            checkpoint_dir="./checkpoints"
-        )
-        
-        print(f"\nResults for {model_name}:")
-        print(json.dumps(results, indent=2))
+    main()
