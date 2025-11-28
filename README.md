@@ -205,7 +205,21 @@ Figure 3: ModelA architecture diagram showing the flow from input to output.
 **ModelC : MedSigLIP Vision Encoder (Frozen Feature Extractor)**.
 **Architecture Details:**.
 
-Input Layer:Dimensions: 224x224x3 (HeightWidth $\times$ Channels - RGB).Preprocessing: Images are first resized to the MedSigLIP standard input resolution (typically $448 \times 448$) and then normalized using the specific mean and standard deviation derived from the model's original training data. This is handled by the Hugging Face AutoProcessor.Feature Extraction:Backbone/Encoder Architecture: MedSigLIP Vision Encoder (based on the SigLIP-400M architecture).Status: Frozen (Non-trainable weights).Function: Extracts high-level, medically-aware features learned from millions of medical image-text pairs. It processes the input image and generates a single, dense feature vector.Core Components:MedSigLIP Encoder: The main body of the model, which is a large Vision Transformer (ViT) variant.Classification Head (MLP): A simple, trainable Multi-Layer Perceptron used to map the extracted features to the final class labels. The structure is:Dense Layer: $\text{Input}=1152$ (MedSigLIP embedding size), $\text{Output}=512$.Activation: Rectified Linear Unit ($\text{ReLU}$).Regularization: Dropout layer ($\text{rate}=0.3$).Output Dense Layer: $\text{Input}=512$, $\text{Output}=2$.Output Layer:Description: A two-unit Dense layer that outputs raw scores (logits).Final Activation: Softmax is applied to convert the two logits into probabilities for Class 0 (Not Pneumonia) and Class 1 (Pneumonia).Loss Function: $\text{Cross-Entropy Loss}$ (used for training the classification head).
+Input Layer:Dimensions: 224x224x3 (Height x Width x Channels - RGB).  
+Preprocessing: Images are first resized to the MedSigLIP standard input resolution and then normalized using the specific mean and standard deviation derived from the model's original training data. This is handled by the Hugging Face AutoProcessor.  
+**Feature Extraction:**  
+Backbone/Encoder Architecture: MedSigLIP Vision Encoder (based on the SigLIP-400M architecture). Status: Frozen (Non-trainable weights).  
+Function: Extracts high-level, medically-aware features learned from millions of medical image-text pairs. It processes the input image and generates a single, dense feature vector.  
+**Core Components:**
+MedSigLIP Encoder: The main body of the model, which is a large Vision Transformer (ViT) variant. Classification Head (MLP): A simple, trainable Multi-Layer Perceptron used to map the extracted features to the final class labels. The structure is:  
+1.Dense Layer: 1152 (MedSigLIP embedding size), Output =512.
+2.Activation: Rectified Linear Unit (ReLU).  
+Regularization: Dropout layer (rate =0.3).  
+Output Dense Layer: Input =512 , Output =2.  
+**Output Layer:**.
+Description: A two-unit Dense layer that outputs raw scores (logits).  
+Final Activation: Softmax is applied to convert the two logits into probabilities.  
+Loss Function: Cross-Entropy Loss (used for training the classification head).
 
-<img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet_arch.png" />
+<img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="ModelC Architecture" src="images/modelC.png" />
 Figure 1: ModelA architecture diagram showing the flow from input to output
