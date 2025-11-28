@@ -189,15 +189,23 @@ Total Parameters: [Number of trainable parameters].
 Figure 2: ModelA architecture diagram showing the flow from input to output
 
 **ModelB : DenseNet121 Pretrained on ImageNet**.
-**Architecture Details:**.
+**Architecture Details:**.  
+Model B uses the same DenseNet121 architecture as Model A, but instead of starting from random weights, it begins with pretrained ImageNet weights.
 
 Input Layer: 224x224x3
 Feature Extraction:
-Core Components: MedSigLIP Encoder: The main body of the model, which is a large Vision Transformer (ViT) variant.Classification Head (MLP): A simple, trainable Multi-Layer Perceptron used to map the extracted features to the final class labels. The structure is:  
-1.Dense Layer: Input =1152 (MedSigLIP embedding size),Output =512 .  
-2.Activation: Rectified Linear Unit ReLU .  
-3.Regularization: Dropout layer rate =0.3.  
-4.Output Dense Layer: Input =512, Output =2 .
+Core Components: Initial 7×7 convolution + max pooling.
+
+1. 4 Dense Blocks, each containing:
+   -Bottleneck layers (1×1 conv → 3×3 conv).
+   -Dense connectivity (each layer receives input from all previous layers).
+2. Transition Layers between blocks:  
+   -BatchNorm → 1×1 conv → 2×2 avg pool.
+3. Growth rate: 32.
+4. Final feature map: 1024-dimensional.
+5. Transfer Learning Strategy:
+   -Optionally freeze early layers (often unfrozen in low-resource settings).
+   -Fine-tune mid and late layers for medical adaptation.
 
 <img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet_arch.png" />.
 Figure 3: ModelA architecture diagram showing the flow from input to output.
@@ -211,12 +219,15 @@ Preprocessing: Images are first resized to the MedSigLIP standard input resoluti
 Backbone/Encoder Architecture: MedSigLIP Vision Encoder (based on the SigLIP-400M architecture). Status: Frozen (Non-trainable weights).  
 Function: Extracts high-level, medically-aware features learned from millions of medical image-text pairs. It processes the input image and generates a single, dense feature vector.  
 **Core Components:**
-MedSigLIP Encoder: The main body of the model, which is a large Vision Transformer (ViT) variant. Classification Head (MLP): A simple, trainable Multi-Layer Perceptron used to map the extracted features to the final class labels. The structure is:  
-1.Dense Layer: 1152 (MedSigLIP embedding size), Output =512.
-2.Activation: Rectified Linear Unit (ReLU).  
-Regularization: Dropout layer (rate =0.3).  
-Output Dense Layer: Input =512 , Output =2.  
+MedSigLIP Encoder: The main body of the model, which is a large Vision Transformer (ViT) variant. Classification Head (MLP): A simple, trainable Multi-Layer Perceptron used to map the extracted features to the final class labels. The structure is:
+
+1. Dense Layer: 1152 (MedSigLIP embedding size), Output =512.
+2. Activation: Rectified Linear Unit (ReLU).
+3. Regularization: Dropout layer (rate =0.3).
+4. Output Dense Layer: Input =512 , Output =2
+
 **Output Layer:**.
+
 Description: A two-unit Dense layer that outputs raw scores (logits).  
 Final Activation: Softmax is applied to convert the two logits into probabilities.  
 Loss Function: Cross-Entropy Loss (used for training the classification head).
