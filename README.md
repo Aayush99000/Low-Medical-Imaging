@@ -179,11 +179,27 @@ CheXpert_Dataset/
 **ModelA : DenseNet from Scratch**.
 **Architecture Details:**.
 
-Input Layer: [Description of input dimensions and preprocessing]
-Feature Extraction: [Description of backbone/encoder architecture]
-Core Components: [Main architectural blocks - conv layers, attention mechanisms, etc.]
-Output Layer: [Description of classification/regression head]
-Total Parameters: [Number of trainable parameters].
+1. Input Layer: 3 × 224 × 224
+2. Feature Extraction:
+
+- Initial Layers
+  -- 7×7 convolution
+  -- BatchNorm + ReLU
+  -- 3×3 max pooling
+- Four Dense Blocks
+  Each block contains:
+  -- Bottleneck layers (1×1 conv → 3×3 conv)
+  -- Dense connectivity (each layer receives feature maps from all previous layers)
+  -- Growth rate: 32 channels per layer
+- Transition Layers
+  -- BatchNorm
+  -- 1×1 convolution
+  -- 2×2 average pooling
+- Final Representation
+  -- After the final Dense Block, outputs a 1024-dimensional feature vector
+  -- Global average pooling applied before classification
+  Core Components: [Main architectural blocks - conv layers, attention mechanisms, etc.]
+  Output Layer: [Description of classification/regression head]
 
 <img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet_arch.png" />
 Figure 2: ModelA architecture diagram showing the flow from input to output
@@ -194,16 +210,17 @@ Model B uses the same DenseNet121 architecture as Model A, but instead of starti
 
 Input Layer: 224x224x3
 Feature Extraction:
-Core Components: Initial 7×7 convolution + max pooling.
+Core Components:
 
-1. 4 Dense Blocks, each containing:
+1. Initial 7×7 convolution + max pooling.
+2. 4 Dense Blocks, each containing:
    -Bottleneck layers (1×1 conv → 3×3 conv).
    -Dense connectivity (each layer receives input from all previous layers).
-2. Transition Layers between blocks:  
+3. Transition Layers between blocks:  
    -BatchNorm → 1×1 conv → 2×2 avg pool.
-3. Growth rate: 32.
-4. Final feature map: 1024-dimensional.
-5. Transfer Learning Strategy:
+4. Growth rate: 32.
+5. Final feature map: 1024-dimensional.
+6. Transfer Learning Strategy:
    -Optionally freeze early layers (often unfrozen in low-resource settings).
    -Fine-tune mid and late layers for medical adaptation.
 
