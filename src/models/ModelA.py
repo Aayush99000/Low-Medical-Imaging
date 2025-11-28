@@ -147,11 +147,11 @@ class DenseNet(nn.Module):
     
 model = DenseNet(
     growth_rate=32,           # k in the paper
-    block_config=(6, 12, 48, 32),  # DenseNet-121 config
+    block_config=(6, 12, 24, 16),  # DenseNet-121 config
     num_init_features=64,
     bn_size=4,                # bottleneck multiplier
     drop_rate=0.2,            # dropout for regularization
-    num_classes=10,           # your classification classes
+    num_classes=2,           # your classification classes
     small_inputs=False,       # True for 32×32, False for larger images
     efficient=False
 )
