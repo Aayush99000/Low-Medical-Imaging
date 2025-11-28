@@ -45,15 +45,15 @@ Augmentation: Aggressive augmentation
 
 **1.Chest X-Ray Images (Pneumonia)**  
 The dataset is organized into 3 folders (train, test, val) and contains subfolders for each image category (Pneumonia/Normal). There are 5,863 X-Ray images (JPEG) and 2 categories (Pneumonia/Normal).
-<img width="1084" height="551" alt="Screenshot 2025-11-12 at 15 57 13" src="images/img1.png" />
+<img width="80" height="90" alt="Screenshot 2025-11-12 at 15 57 13" src="images/img1.png" />
 
 **2.HAM10000 Dermatoscopic**
 The HAM10000 dataset, a large collection of multi-source dermatoscopic images of common pigmented skin lesions.
-<img width="1049" height="706" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img2.png" />
+<img width="80" height="90" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img2.png" />
 
 **2.CheXpert**
 The dataset includes labels for 14 thoracic pathologies (including Pneumonia, Edema, Atelectasis, Pleural Effusion, etc.) with four label types: positive, negative, uncertain, and unmentioned.
-<img width="1049" height="706" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img3.png" />
+<img width="80" height="90" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img3.png" />
 
 ## 🛠️ PyTorch Pipeline: Training & Evaluation
 
@@ -173,3 +173,43 @@ CheXpert_Dataset/
 ├── train.csv
 └── valid.csv
 ```
+
+## Model Architecture.
+
+**ModelA : DenseNet from Scratch**.
+**Architecture Details:**.
+
+Input Layer: [Description of input dimensions and preprocessing]
+Feature Extraction: [Description of backbone/encoder architecture]
+Core Components: [Main architectural blocks - conv layers, attention mechanisms, etc.]
+Output Layer: [Description of classification/regression head]
+Total Parameters: [Number of trainable parameters].
+
+<img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet_arch.png" />
+Figure 2: ModelA architecture diagram showing the flow from input to output
+
+**ModelB : DenseNet121 Pretrained on ImageNet**.
+**Architecture Details:**.
+
+Input Layer: [Description of input dimensions and preprocessing]
+Feature Extraction: [Description of backbone/encoder architecture]
+Core Components: MedSigLIP Encoder: The main body of the model, which is a large Vision Transformer (ViT) variant.Classification Head (MLP): A simple, trainable Multi-Layer Perceptron used to map the extracted features to the final class labels. The structure is:  
+1.Dense Layer: Input =1152 (MedSigLIP embedding size),Output =512 .  
+2.Activation: Rectified Linear Unit ReLU .  
+3.Regularization: Dropout layer rate =0.3.  
+4.Output Dense Layer: Input =512, Output =2 .
+
+<img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet_arch.png" />.
+Figure 3: ModelA architecture diagram showing the flow from input to output.
+
+**ModelC : MedSigLIP Vision Encoder (Frozen Feature Extractor)**.
+**Architecture Details:**.
+
+Input Layer: 224x224x3
+Feature Extraction: [Description of backbone/encoder architecture]
+Core Components: [Main architectural blocks - conv layers, attention mechanisms, etc.]
+Output Layer: [Description of classification/regression head]
+Total Parameters: [Number of trainable parameters].
+
+<img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet_arch.png" />
+Figure 1: ModelA architecture diagram showing the flow from input to output
