@@ -32,12 +32,11 @@ class ModelC_MedSigLIP(nn.Module):
         # --- 1. Load MedSigLIP Vision Encoder ---
         # MedSigLIP is a multi-modal model, but we'll only use its Vision Encoder.
         # The 'google/medsiglip-448' variant is common.
-        self.medsiglip = AutoModel.from_pretrained(model_id)
+        self.medsiglip = AutoModel.from_pretrained("google/medsiglip-448")
         
         # --- 2. Freeze the Encoder (Crucial for Feature Extraction TL) ---
         for param in self.medsiglip.parameters():
             param.requires_grad = False
-            
         # Determine the embedding dimension from the model's configuration
         # MedSigLIP (SigLIP-400M) typically outputs an embedding of 1152 dimensions.
         vision_hidden_size = self.medsiglip.config.vision_config.hidden_size
@@ -60,15 +59,32 @@ class ModelC_MedSigLIP(nn.Module):
         # For simplicity, we can use the final pooled output or the last layer output.
         # Assuming the model returns a pooled output or we take the mean/CLS token:
         
-        # Note: The exact feature to take depends on the specific MedSigLIP implementation.
-        # In a typical ViT-based model, you might take the first token (CLS) or average.
-        # For a clean approach, we'll try to rely on the model's built-in feature/pooled output.
-        # If the model returns a structured output, we access the pooled features:
-        # For MedSigLIP, let's use the default image embedding output:
-        
         image_features = vision_output.image_embeds 
         
         # 3. Pass features to the Classification Head
         logits = self.classification_head(image_features)
         
         return logits
+    
+
+# For HAM10000 (Skin Lesions) - 7 classes
+model_ham = ModelC_MedSigLIP(
+    model_id="google/medsiglip-448",
+    num_classes=7
+).to(device)
+
+# For CheXpert (Chest X-rays) - 14 classes
+model_chexpert = ModelC_MedSigLIP(
+    model_id="google/medsiglip-448",
+    num_classes=14
+).to(device)
+
+# For Chest X-ray (Pneumonia) - 2 classes
+model_pneumonia = ModelC_MedSigLIP(
+    model_id="google/medsiglip-448",
+    num_classes=2
+).to(device)
+
+print(f"HAM10000 Model: {sum(p.numel() for p in model_ham.parameters() if p.requires_grad):,} trainable params")
+print(f"CheXpert Model: {sum(p.numel() for p in model_chexpert.parameters() if p.requires_grad):,} trainable params")
+print(f"Pneumonia Model: {sum(p.numel() for p in model_pneumonia.parameters() if p.requires_grad):,} trainable params")

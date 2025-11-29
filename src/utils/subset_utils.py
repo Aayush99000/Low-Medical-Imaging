@@ -1,6 +1,4 @@
 '''Creating subset of 300 images for Pheumonia detection task'''
-
-# src/utils/subset_utils.py
 import json
 from pathlib import Path
 from typing import Optional, List, Dict
@@ -20,19 +18,6 @@ def create_subset_indices(
     save_path: str = "data/processed/subset_indices.json",
     patient_col: Optional[str] = None
 ) -> Dict:
-    """
-    Create stratified subset indices for `dataset` and save to JSON.
-
-    Args:
-        dataset: dataset instance that must expose `labels` (list/np.array) aligned with dataset ordering.
-                 Optionally dataset.df with patient column if patient_col provided.
-        subset_size: total number of images desired (ignored if per_class provided).
-        per_class: number of images per class (overrides subset_size).
-        seed: random seed.
-        save_path: path to write JSON metadata containing indices and info.
-        patient_col: optional column name (in dataset.df) for patient-level grouping.
-
-    """
     rng = _rng(seed)
 
     # Validate dataset exposes labels
@@ -47,11 +32,14 @@ def create_subset_indices(
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Patient-level sampling (preferred) ---------------------------------------------------
+    '''This block samples patients instead of images to avoid data leakage. It requires a patient identifier column
+    in the dataset's dataframe (dataset.df) to group images'''
     if patient_col and hasattr(dataset, "df") and patient_col in dataset.df.columns:
         # build patient -> list(indices) mapping and patient -> class mapping (dominant label)
         patient_to_indices = defaultdict(list)
         for idx, pid in enumerate(dataset.df[patient_col].values):
             patient_to_indices[pid].append(idx)
+
         # map patient -> class (majority class of that patient's images)
         patient_to_class = {}
         for pid, inds in patient_to_indices.items():
@@ -139,7 +127,7 @@ def create_subset_indices(
     indices = np.array(indices, dtype=int)
     rng.shuffle(indices)
 
-    # info metadata to save
+    # Build info dict and compute class counts
     info = {
         "indices": indices.tolist(),
         "subset_size": len(indices),
@@ -159,9 +147,6 @@ def create_subset_indices(
 
 
 def load_subset(dataset, indices_path: str = "data/processed/subset_indices.json"):
-    """
-    Load subset JSON and return a torch.utils.data.Subset for the given dataset.
-    """
     path = Path(indices_path)
     if not path.exists():
         raise FileNotFoundError(f"Subset indices JSON not found: {path}")
@@ -169,7 +154,7 @@ def load_subset(dataset, indices_path: str = "data/processed/subset_indices.json
         info = json.load(f)
     indices = info["indices"]
     print(f"[subset_utils] Loaded {len(indices)} indices from {indices_path}")
-    return Subset(dataset, indices)
+    return Subset(dataset, indices) # return a Subset object
 
 
 def create_multiple_subsets(
@@ -185,7 +170,7 @@ def create_multiple_subsets(
     for s in sizes:
         save_path = out_dir / f"subset_indices_{s}.json"
         info = create_subset_indices(
-            dataset,
+            dataset=dataset,
             subset_size=s,
             per_class=None,
             seed=seed,
