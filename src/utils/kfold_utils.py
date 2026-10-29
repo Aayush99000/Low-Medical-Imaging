@@ -2,14 +2,35 @@
 import json
 import shutil
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Union
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.metrics import balanced_accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from src.utils.train_utils import ModelTrainer
+
+SUMMARY_METRICS = ["test_acc", "test_balanced_acc", "test_auc", "test_f1", "test_precision", "test_recall"]
+
+
+def _test_class_metrics(model: nn.Module, loader: DataLoader, device: torch.device) -> Dict[str, float]:
+    """Macro-averaged precision / recall / F1 and balanced accuracy on the test set."""
+    model.eval()
+    preds, labels = [], []
+    with torch.no_grad():
+        for images, y in loader:
+            logits = model(images.to(device))
+            preds.append(logits.argmax(dim=1).cpu().numpy())
+            labels.append(np.asarray(y))
+    preds, labels = np.concatenate(preds), np.concatenate(labels)
+    return {
+        "test_balanced_acc": float(balanced_accuracy_score(labels, preds)),
+        "test_f1": float(f1_score(labels, preds, average="macro", zero_division=0)),
+        "test_precision": float(precision_score(labels, preds, average="macro", zero_division=0)),
+        "test_recall": float(recall_score(labels, preds, average="macro", zero_division=0)),
+    }
 
 
 def train_with_kfold(
@@ -86,6 +107,8 @@ def train_with_kfold(
             **trainer_kwargs,
         )
         results = trainer.train(num_epochs=num_epochs, early_stop_patience=early_stop_patience)
+        # trainer.model now holds the best checkpoint (reloaded by ModelTrainer.train)
+        class_metrics = _test_class_metrics(trainer.model, test_loader, trainer.device)
 
         fold_results.append({
             "fold": fold,
@@ -97,20 +120,11 @@ def train_with_kfold(
             "test_loss": float(results["test_loss"]),
             "test_acc": float(results["test_acc"]),
             "test_auc": float(results["test_auc"]) if results["test_auc"] is not None else None,
+            **class_metrics,
             "history": results["history"],
         })
 
-    # Summary across all folds (sample std, ddof=1)
-    print(f"\n{'='*60}\nK-FOLD TEST SUMMARY - {run_name}\n{'='*60}")
-    for key in ("test_acc", "test_auc"):
-        vals = np.array([r[key] for r in fold_results if r[key] is not None], dtype=float)
-        if len(vals) > 0:
-            std = vals.std(ddof=1) if len(vals) > 1 else 0.0
-            print(f"{key}: {vals.mean():.4f} ± {std:.4f}  (n={len(vals)})")
-    for r in fold_results:
-        auc_str = f"{r['test_auc']:.4f}" if r["test_auc"] is not None else "N/A"
-        print(f"  Fold {r['fold']}: best {r['monitor_metric']}={r['best_val_metric']:.4f} "
-              f"(epoch {r['best_epoch']}), test_acc={r['test_acc']:.4f}, test_auc={auc_str}")
+    summarize_kfold_results(fold_results, title=run_name)
 
     results_path = Path(output_dir) / f"{run_name}_kfold_results.json"
     results_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,3 +138,29 @@ def load_kfold_results(results_path: str) -> List[Dict]:
     """Load the per-fold results saved by train_with_kfold (for summary tables and training curves)."""
     with open(results_path, "r") as f:
         return json.load(f)
+
+
+def summarize_kfold_results(
+    results: Union[str, List[Dict]],
+    metrics: Sequence[str] = SUMMARY_METRICS,
+    title: Optional[str] = None,
+) -> Dict[str, Dict]:
+    """
+    Print and return mean ± sample std (ddof=1) of the real per-fold test metrics.
+
+    results: a list from train_with_kfold, or the path of its saved JSON file.
+    Returns {metric: {"mean", "std", "per_fold", "n"}}; metrics missing from every fold are skipped.
+    """
+    folds = load_kfold_results(results) if isinstance(results, str) else results
+
+    print(f"\n{'='*60}\nK-FOLD TEST SUMMARY{' - ' + title if title else ''}\n{'='*60}")
+    summary = {}
+    for m in metrics:
+        vals = np.array([f[m] for f in folds if f.get(m) is not None], dtype=float)
+        vals = vals[~np.isnan(vals)]
+        if len(vals) == 0:
+            continue
+        std = float(vals.std(ddof=1)) if len(vals) > 1 else 0.0
+        summary[m] = {"mean": float(vals.mean()), "std": std, "per_fold": vals.tolist(), "n": int(len(vals))}
+        print(f"{m:18s} {vals.mean():.4f} ± {std:.4f}   per fold: {np.round(vals, 4).tolist()}")
+    return summary
