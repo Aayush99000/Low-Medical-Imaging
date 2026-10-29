@@ -2,29 +2,40 @@ import os
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Sequence
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import matplotlib.pyplot as plt
 
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
 class ChestXrayDataset(Dataset):
-    
-    def __init__(self, 
+
+    def __init__(self,
                  dataset_root: str,
                  split: str = "train",
-                 image_size: Tuple[int, int] = (224, 224),
+                 image_size: Tuple[int, int] = (448, 448),
                  augment: bool = True,
                  normalize: bool = True,
-                 augmentation_strength: float = 0.5):
+                 augmentation_strength: float = 0.5,
+                 mean: Sequence[float] = IMAGENET_MEAN,
+                 std: Sequence[float] = IMAGENET_STD):
+        """
+        mean / std: normalization stats of the backbone's pretraining. ImageNet stats for Models A/B;
+        for Model C pass MedSigLIP's own stats, e.g. ChestXrayDataset(root, **get_medsiglip_preprocessing()).
+        """
         self.dataset_root = dataset_root
         self.split = split
         self.image_size = image_size
         self.augment = augment
         self.normalize = normalize
         self.augmentation_strength = augmentation_strength
+        self.mean = list(mean)
+        self.std = list(std)
         
-        self.label_map = {"Normal": 0, "Pneumonia": 1}
+        self.label_map = {"NORMAL": 0, "PNEUMONIA": 1}  # Kaggle folder names (case-sensitive on Linux/Colab)
         self.images = []
         self.labels = []
         
@@ -70,12 +81,9 @@ class ChestXrayDataset(Dataset):
         return transforms.Compose(aug_list)
     
     def _get_normalization_transforms(self) -> transforms.Compose:
-        """Create normalization transformations using ImageNet stats."""
+        """Create normalization transformations using the configured mean / std."""
         return transforms.Compose([
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            )
+            transforms.Normalize(mean=self.mean, std=self.std)
         ])
     
     def __len__(self) -> int:
