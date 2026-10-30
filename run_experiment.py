@@ -4,6 +4,7 @@ Examples:
     python run_experiment.py --dataset pneumonia --model B_imagenet_probe
     python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch_size 4 --grad_accum_steps 4
     python run_experiment.py --dataset ham10000 --model B_imagenet_probe --class_weights balanced --monitor_metric val_balanced_acc
+    python run_experiment.py --dataset chexpert --model C_medsiglip_probe     # Pleural Effusion, frontal views
     python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test     # tiny run to check the pipeline
 '''
 import argparse
@@ -21,11 +22,13 @@ from src.utils.subset_utils import create_subset_indices
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dataset", choices=["pneumonia", "ham10000"], required=True)
+    p.add_argument("--dataset", choices=["pneumonia", "ham10000", "chexpert"], required=True)
     p.add_argument("--model", choices=sorted(MODEL_ZOO), required=True)
     p.add_argument("--pneumonia_root", default="chest_xray_pheumonia/chest_xray")
     p.add_argument("--ham_metadata", default="HAM10000_Dataset/metadata/HAM10000_metadata.csv")
     p.add_argument("--ham_image_dirs", nargs="+", default=["HAM10000_Dataset/train_dir", "HAM10000_Dataset/val_dir"])
+    p.add_argument("--chexpert_root", default="CheXpert_Dataset", help="folder with train.csv, valid.csv, train/, valid/")
+    p.add_argument("--chexpert_task", default="Pleural Effusion", help="one CheXpert finding (a train.csv column)")
     p.add_argument("--out_dir", default="experiments")
     p.add_argument("--device", default=None, help="cuda / mps / cpu (default: best available)")
     p.add_argument("--num_workers", type=int, default=2)
@@ -83,6 +86,20 @@ def build_ham10000(args, cfg, prep):
     return train_aug, train_plain, sp["subset_labels"], test_ds, len(sp["classes"])
 
 
+def build_chexpert(args, cfg, prep):
+    from src.data.chexpert_dataset import CheXpertBinaryDataset, make_chexpert_splits
+    task_tag = args.chexpert_task.lower().replace(" ", "_")
+    sp = make_chexpert_splits(
+        args.chexpert_root, task=args.chexpert_task, subset_size=cfg["subset_size"], per_class=cfg["per_class"],
+        min_per_class=max(5, cfg["n_folds"]), seed=cfg["seed"],
+        save_path=str(Path(args.out_dir) / f"chexpert_{task_tag}_split_seed{cfg['seed']}.json"))
+    kw = dict(augmentation_strength=cfg["augmentation_strength"], **prep)
+    train_aug = CheXpertBinaryDataset(sp["subset_images"], sp["subset_labels"], augment=True, **kw)
+    train_plain = CheXpertBinaryDataset(sp["subset_images"], sp["subset_labels"], augment=False, **kw)
+    test_ds = CheXpertBinaryDataset(sp["test_images"], sp["test_labels"], augment=False, **kw)
+    return train_aug, train_plain, sp["subset_labels"], test_ds, 2
+
+
 def main():
     args = parse_args()
     cfg = dict(PROTOCOL, per_class=None)
@@ -101,7 +118,7 @@ def main():
     prep = get_preprocessing(spec["backbone"], cfg["image_size"])
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
 
-    builder = build_pneumonia if args.dataset == "pneumonia" else build_ham10000
+    builder = {"pneumonia": build_pneumonia, "ham10000": build_ham10000, "chexpert": build_chexpert}[args.dataset]
     train_aug, train_plain, labels, test_ds, num_classes = builder(args, cfg, prep)
     if args.smoke_test:
         rng = np.random.default_rng(0)

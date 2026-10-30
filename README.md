@@ -44,7 +44,7 @@ Link: [Harvard Dataverse](https://doi.org/10.7910/DVN/DBW86T)
 
 **3. CheXpert Dataset**
 Source: Stanford ML Group  
-Task: Multi-label chest radiograph classification  
+Task: Pleural Effusion (binary) on frontal radiographs; tested on the radiologist-labelled validation split  
 Link: [Stanford ML Group](https://arxiv.org/abs/1901.07031)
 
 **Data Strategy**
@@ -65,13 +65,17 @@ The HAM10000 dataset, a large collection of multi-source dermatoscopic images of
 
 **2.CheXpert**
 The dataset includes labels for 14 thoracic pathologies (including Pneumonia, Edema, Atelectasis, Pleural Effusion, etc.) with four label types: positive, negative, uncertain, and unmentioned.
+This study uses one binary task, Pleural Effusion, on frontal (AP/PA) views (`make_chexpert_splits` in `src/data/chexpert_dataset.py`):
+- Test set: the official validation split, 202 frontal images from 200 patients labelled by radiologist consensus (64 positive). None of these patients are in train.csv. With ~200 images, report the test AUC with a confidence interval.
+- Training subset: train.csv images with a definite label (uncertain labels dropped; unmentioned treated as negative), one image per patient, then a stratified sample of 300 (91 positive with seed 42).
+- `--chexpert_task` selects another finding (any train.csv column) with the same rules.
 <img width="80" height="90" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img3.png" />
 
 ## 🛠️ PyTorch Pipeline: Training & Evaluation
 
 This project uses **PyTorch** for building and training transfer learning models. The pipeline consists of:
 
-1. **Data** (`src/data/`) — Chest X-ray and HAM10000 datasets (lesion-grouped HAM10000 splits) with built-in augmentation
+1. **Data** (`src/data/`) — Chest X-ray, HAM10000 and CheXpert datasets (lesion-grouped HAM10000 splits, patient-level CheXpert splits) with built-in augmentation
 2. **Models** (`src/models/backbones.py`) — one builder for every backbone, pretraining and regime in the comparison grid
 3. **Protocol** (`src/protocol.py`) — the model grid and the shared training settings
 4. **Training** (`src/utils/train_utils.py`, `src/utils/kfold_utils.py`) — k-fold training that saves the real per-fold test results
@@ -82,6 +86,7 @@ This project uses **PyTorch** for building and training transfer learning models
 python run_experiment.py --dataset pneumonia --model B_imagenet_probe
 python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch_size 4 --grad_accum_steps 4
 python run_experiment.py --dataset ham10000 --model B_imagenet_probe --class_weights balanced --monitor_metric val_balanced_acc
+python run_experiment.py --dataset chexpert --model C_medsiglip_probe   # Pleural Effusion, frontal views
 python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test   # quick pipeline check
 ```
 
@@ -143,54 +148,19 @@ HAM10000/
 │   └── vasc/
 ```
 
-For CheXpert Dataset:
+For CheXpert Dataset (CheXpert-v1.0-small; paths in the CSVs are resolved under this folder):
 
 ```
 CheXpert_Dataset/
 ├── train/
-│   ├── Atelectasis/
-│   │   ├── image1.jpg
-│   ├── Cardiomegaly/
-│   │   ├── image1.jpg
-│   ├── Consolidation/
-│   │   ├── image1.jpg
-│   ├── Edema/
-│   │   ├── image1.jpg
-│   ├── Effusion/
-│   │   ├── image1.jpg
-│   ├── Enlarged_Cardiomediastinum/
-│   │   ├── image1.jpg
-│   ├── Fracture/
-│   │   ├── image1.jpg
-│   ├── Lung_Lesion/
-│   │   ├── image1.jpg
-│   ├── Lung_Opacity/
-│   │   ├── image1.jpg
-│   ├── No_Finding/
-│   │   ├── image1.jpg
-│   ├── Pleural_Other/
-│   │   ├── image1.jpg
-│   ├── Pneumonia/
-│   │   ├── image1.jpg
-│   ├── Pneumothorax/
-│   │   ├── image1.jpg
-│   └── Support_Devices/
-│       ├── image1.jpg
+│   └── patient00001/
+│       └── study1/
+│           ├── view1_frontal.jpg
+│           └── view2_lateral.jpg
 ├── valid/
-│   ├── Atelectasis/
-│   ├── Cardiomegaly/
-│   ├── Consolidation/
-│   ├── Edema/
-│   ├── Effusion/
-│   ├── Enlarged_Cardiomediastinum/
-│   ├── Fracture/
-│   ├── Lung_Lesion/
-│   ├── Lung_Opacity/
-│   ├── No_Finding/
-│   ├── Pleural_Other/
-│   ├── Pneumonia/
-│   ├── Pneumothorax/
-│   └── Support_Devices/
+│   └── patient64541/
+│       └── study1/
+│           └── view1_frontal.jpg
 ├── train.csv
 └── valid.csv
 ```
