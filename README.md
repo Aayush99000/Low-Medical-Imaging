@@ -81,6 +81,7 @@ This project uses **PyTorch** for building and training transfer learning models
 ```bash
 python run_experiment.py --dataset pneumonia --model B_imagenet_probe
 python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch_size 4 --grad_accum_steps 4
+python run_experiment.py --dataset ham10000 --model B_imagenet_probe --class_weights balanced --monitor_metric val_balanced_acc
 python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test   # quick pipeline check
 ```
 

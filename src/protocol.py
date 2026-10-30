@@ -31,7 +31,8 @@ PROTOCOL = {
     "scratch_lr": 1e-3,              # whole network when training from random init (Model A)
     "scheduler": "cosine",           # CosineAnnealingLR over num_epochs, stepped per epoch
     "early_stop_patience": None,     # None = train all epochs, select the best epoch on validation
-    "monitor_metric": "val_auc",
+    "monitor_metric": "val_auc",     # binary or macro one-vs-rest AUC; also "val_balanced_acc", "val_acc", "val_loss"
+    "class_weights": None,           # None or "balanced" (per-fold weighted cross-entropy); same for every model
     "clip_grad_norm": 1.0,
 }
 

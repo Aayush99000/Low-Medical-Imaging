@@ -8,12 +8,42 @@ import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 from tqdm.auto import tqdm
 
-# Optional AUC metric 
+# Optional AUC metric
 try:
-    from sklearn.metrics import roc_auc_score
+    from sklearn.metrics import roc_auc_score, balanced_accuracy_score
     _HAS_SKLEARN = True
 except Exception:
     _HAS_SKLEARN = False
+
+# Metrics that can pick the best epoch (all higher-is-better; val_loss is negated internally)
+MONITOR_METRICS = ("val_auc", "val_balanced_acc", "val_acc", "val_loss")
+
+
+def compute_auc(y_true: np.ndarray, probs: np.ndarray) -> Optional[float]:
+    """
+    Binary: ROC AUC of the positive class. Multiclass: macro one-vs-rest AUC over the classes that have
+    both positives and negatives in y_true (small CV folds can miss a rare class). probs: (N, C), float32.
+    """
+    if not _HAS_SKLEARN or len(y_true) == 0:
+        return None
+    n_classes = probs.shape[1]
+    if n_classes == 2:
+        if len(np.unique(y_true)) < 2:
+            return None
+        return float(roc_auc_score(y_true, probs[:, 1]))
+    aucs = []
+    for c in range(n_classes):
+        positives = y_true == c
+        if 0 < positives.sum() < len(y_true):
+            aucs.append(roc_auc_score(positives.astype(int), probs[:, c]))
+    return float(np.mean(aucs)) if aucs else None
+
+
+def compute_class_weights(labels, num_classes: int) -> torch.Tensor:
+    """'Balanced' class weights n / (C * n_c), as in sklearn; a class missing from labels gets weight 0."""
+    counts = np.bincount(np.asarray(labels, dtype=int), minlength=num_classes).astype(float)
+    weights = np.where(counts > 0, counts.sum() / (num_classes * np.maximum(counts, 1)), 0.0)
+    return torch.tensor(weights, dtype=torch.float32)
 
 class ModelTrainer:
     def __init__(
@@ -49,7 +79,10 @@ class ModelTrainer:
         self.clip_grad_norm = clip_grad_norm
         self.log_interval = log_interval
         self.save_interval = save_interval
-        self.monitor_metric = monitor_metric  # "val_auc" preferred if available
+        if monitor_metric not in MONITOR_METRICS:
+            raise ValueError(f"monitor_metric must be one of {MONITOR_METRICS}, got {monitor_metric}")
+        self.monitor_metric = monitor_metric
+        self._warned_auc_fallback = False
         self.grad_accum_steps = max(1, int(grad_accum_steps))
 
         # output paths
@@ -66,7 +99,7 @@ class ModelTrainer:
         self.best_epoch = None
         self.history = {
             "train_loss": [], "train_acc": [], "val_loss": [], "val_acc": [], "val_auc": [],
-            "lrs": [], "epoch_times": []
+            "val_balanced_acc": [], "lrs": [], "epoch_times": []
         }
 
         # init csv header
@@ -81,27 +114,33 @@ class ModelTrainer:
                 writer = csv.writer(f)
                 writer.writerow([
                     "epoch", "train_loss", "train_acc", "val_loss", "val_acc", "val_auc",
-                    "lr", "epoch_time_s"
+                    "val_balanced_acc", "lr", "epoch_time_s"
                 ])
 
-    def _compute_metrics(self, logits: torch.Tensor, labels: torch.Tensor) -> Tuple[float, float, Optional[float]]:
+    def _compute_metrics(self, logits: torch.Tensor, labels: torch.Tensor) -> Tuple[float, Optional[float]]:
         """
-        Return (loss, accuracy, auc_or_none) computed on CPU tensors.
+        Return (accuracy, auc_or_none) computed on CPU tensors.
         """
-        probs = torch.softmax(logits, dim=1)
+        probs = torch.softmax(logits.float(), dim=1)
         preds = logits.argmax(dim=1)
-        correct = (preds == labels).sum().item()
-        acc = correct / labels.size(0)
-        auc = None
-        if _HAS_SKLEARN and logits.size(1) == 2:
-            # compute AUC (positive class = index 1)
-            try:
-                y_true = labels.cpu().numpy()
-                y_score = probs[:, 1].cpu().numpy()
-                auc = roc_auc_score(y_true, y_score)
-            except Exception:
-                auc = None
-        return acc, auc
+        acc = (preds == labels).sum().item() / labels.size(0)
+        return acc, compute_auc(labels.cpu().numpy(), probs.cpu().numpy())
+
+    def _select_metric(self, val_loss: float, val_acc: float, val_auc: Optional[float],
+                       val_balanced_acc: Optional[float]) -> Optional[float]:
+        """Value of the monitored metric (higher is better). AUC falls back to balanced accuracy, never plain accuracy."""
+        if self.monitor_metric == "val_auc":
+            if val_auc is not None:
+                return val_auc
+            if not self._warned_auc_fallback:
+                print("[ModelTrainer] val AUC unavailable this epoch; selecting by val_balanced_acc instead")
+                self._warned_auc_fallback = True
+            return val_balanced_acc
+        if self.monitor_metric == "val_balanced_acc":
+            return val_balanced_acc
+        if self.monitor_metric == "val_loss":
+            return -val_loss
+        return val_acc
 
     def _train_one_epoch(self) -> Tuple[float, float]:
         self.model.train()
@@ -157,9 +196,10 @@ class ModelTrainer:
         acc = correct / max(1, total)
         return avg_loss, acc
 
-    def _eval_loader(self, loader) -> Tuple[float, float, Optional[float]]:
+    def _eval_loader(self, loader) -> Tuple[float, float, Optional[float], Optional[float]]:
         """
-        Evaluate on loader and return (loss, acc, auc_or_none)
+        Evaluate on loader and return (loss, acc, auc_or_none, balanced_acc_or_none).
+        AUC is binary or macro one-vs-rest multiclass, from float32 softmax probabilities.
         """
         self.model.eval()
         running_loss = 0.0
@@ -167,36 +207,32 @@ class ModelTrainer:
         correct = 0
         all_probs = []
         all_labels = []
+        all_preds = []
 
         with torch.no_grad():
             pbar = tqdm(loader, desc=f"Eval (epoch {self.current_epoch})", leave=False)
             for images, labels in pbar:
                 images = images.to(self.device, non_blocking=True)
                 labels = labels.to(self.device, non_blocking=True)
-                logits = self.model(images)
+                logits = self.model(images).float()  # float32 so probabilities sum to 1 (AMP logits may be fp16)
                 loss = self.criterion(logits, labels)
                 running_loss += loss.item() * images.size(0)
                 preds = logits.argmax(dim=1)
                 correct += (preds == labels).sum().item()
                 total += labels.size(0)
 
-                if _HAS_SKLEARN and logits.size(1) == 2:
-                    probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
-                    all_probs.append(probs)
-                    all_labels.append(labels.cpu().numpy())
+                all_probs.append(torch.softmax(logits, dim=1).cpu().numpy())
+                all_labels.append(labels.cpu().numpy())
+                all_preds.append(preds.cpu().numpy())
 
         avg_loss = running_loss / max(1, total)
         acc = correct / max(1, total)
-        auc = None
-        if _HAS_SKLEARN and len(all_probs) > 0:
-            import numpy as _np
-            try:
-                y_score = _np.concatenate(all_probs, axis=0)
-                y_true = _np.concatenate(all_labels, axis=0)
-                auc = roc_auc_score(y_true, y_score)
-            except Exception:
-                auc = None
-        return avg_loss, acc, auc
+        auc, balanced_acc = None, None
+        if _HAS_SKLEARN and total > 0:
+            y_true = np.concatenate(all_labels)
+            auc = compute_auc(y_true, np.concatenate(all_probs).astype(np.float32))
+            balanced_acc = float(balanced_accuracy_score(y_true, np.concatenate(all_preds)))
+        return avg_loss, acc, auc, balanced_acc
 
     def save_checkpoint(self, epoch: int, is_best: bool = False):
         ck = {
@@ -254,10 +290,10 @@ class ModelTrainer:
             train_loss, train_acc = self._train_one_epoch()
 
             # Validate
-            val_loss, val_acc, val_auc = self._eval_loader(self.val_loader)
+            val_loss, val_acc, val_auc, val_bal = self._eval_loader(self.val_loader)
 
             # Choose metric to monitor
-            metric_val = val_auc if (self.monitor_metric == "val_auc" and val_auc is not None) else val_acc
+            metric_val = self._select_metric(val_loss, val_acc, val_auc, val_bal)
 
             # Scheduler step
             if self.scheduler is not None:
@@ -279,6 +315,7 @@ class ModelTrainer:
             self.history["val_loss"].append(val_loss)
             self.history["val_acc"].append(val_acc)
             self.history["val_auc"].append(val_auc if val_auc is not None else float("nan"))
+            self.history["val_balanced_acc"].append(val_bal if val_bal is not None else float("nan"))
             self.history["lrs"].append(lr)
             self.history["epoch_times"].append(epoch_time)
 
@@ -287,10 +324,12 @@ class ModelTrainer:
                 writer.writerow([epoch, f"{train_loss:.6f}", f"{train_acc:.4f}",
                                  f"{val_loss:.6f}", f"{val_acc:.4f}",
                                  f"{val_auc if val_auc is not None else 'nan'}",
+                                 f"{val_bal if val_bal is not None else 'nan'}",
                                  f"{lr:.6e}", f"{epoch_time:.1f}"])
 
             print(f"[Epoch {epoch}/{num_epochs}] train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
-                  f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} val_auc={val_auc} lr={lr:.2e} time={epoch_time:.1f}s")
+                  f"val_loss={val_loss:.4f} val_acc={val_acc:.4f} val_auc={val_auc} val_bal_acc={val_bal} "
+                  f"lr={lr:.2e} time={epoch_time:.1f}s")
 
             # checkpoint & best model logic
             is_best = (metric_val is not None) and (metric_val > self.best_metric)
@@ -313,13 +352,14 @@ class ModelTrainer:
         # after training, evaluate test using best model if exists
         if self.best_model_path.exists():
             self.model.load_state_dict(torch.load(self.best_model_path, map_location=self.device))
-        test_loss, test_acc, test_auc = self._eval_loader(self.test_loader)
-        print(f"Test results -- loss: {test_loss:.4f}, acc: {test_acc:.4f}, auc: {test_auc}")
+        test_loss, test_acc, test_auc, test_bal = self._eval_loader(self.test_loader)
+        print(f"Test results -- loss: {test_loss:.4f}, acc: {test_acc:.4f}, auc: {test_auc}, balanced_acc: {test_bal}")
         return {
             "best_metric": self.best_metric,
             "best_epoch": self.best_epoch,
             "history": self.history,
             "test_loss": test_loss,
             "test_acc": test_acc,
-            "test_auc": test_auc
+            "test_auc": test_auc,
+            "test_balanced_acc": test_bal
         }

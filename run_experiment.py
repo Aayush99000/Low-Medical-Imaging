@@ -3,6 +3,7 @@
 Examples:
     python run_experiment.py --dataset pneumonia --model B_imagenet_probe
     python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch_size 4 --grad_accum_steps 4
+    python run_experiment.py --dataset ham10000 --model B_imagenet_probe --class_weights balanced --monitor_metric val_balanced_acc
     python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test     # tiny run to check the pipeline
 '''
 import argparse
@@ -38,6 +39,9 @@ def parse_args():
     p.add_argument("--subset_size", type=int)
     p.add_argument("--per_class", type=int, help="balanced subset with this many images per class")
     p.add_argument("--seed", type=int)
+    p.add_argument("--class_weights", choices=["none", "balanced"], help="balanced = class-weighted cross-entropy")
+    p.add_argument("--monitor_metric", choices=["val_auc", "val_balanced_acc", "val_acc", "val_loss"],
+                   help="metric that picks the best epoch")
     p.add_argument("--smoke_test", action="store_true", help="tiny subset / test set, 2 folds, 1 epoch, 64px")
     return p.parse_args()
 
@@ -86,9 +90,11 @@ def main():
         cfg.update(num_epochs=1, n_folds=2, image_size=(64, 64), batch_size=4, per_class=6)
     for key, arg in [("num_epochs", "epochs"), ("batch_size", "batch_size"), ("grad_accum_steps", "grad_accum_steps"),
                      ("backbone_lr", "backbone_lr"), ("n_folds", "n_folds"), ("subset_size", "subset_size"),
-                     ("per_class", "per_class"), ("seed", "seed")]:
+                     ("per_class", "per_class"), ("seed", "seed"), ("monitor_metric", "monitor_metric")]:
         if getattr(args, arg) is not None:
             cfg[key] = getattr(args, arg)
+    if args.class_weights is not None:
+        cfg["class_weights"] = None if args.class_weights == "none" else args.class_weights
 
     spec = MODEL_ZOO[args.model]
     device = pick_device(args.device)
@@ -123,6 +129,7 @@ def main():
         train_dataset=train_aug, eval_dataset=train_plain, labels=labels, test_loader=test_loader,
         run_name=run_name, n_folds=cfg["n_folds"], num_epochs=cfg["num_epochs"], batch_size=cfg["batch_size"],
         num_workers=args.num_workers, seed=cfg["seed"], early_stop_patience=cfg["early_stop_patience"],
+        class_weights=cfg["class_weights"], num_classes=num_classes,
         output_dir=args.out_dir, device=device,
         use_amp=device.type == "cuda", clip_grad_norm=cfg["clip_grad_norm"],
         monitor_metric=cfg["monitor_metric"], grad_accum_steps=cfg["grad_accum_steps"],

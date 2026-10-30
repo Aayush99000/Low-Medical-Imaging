@@ -10,7 +10,9 @@ from sklearn.metrics import balanced_accuracy_score, f1_score, precision_score, 
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from src.utils.train_utils import ModelTrainer
+from src.utils.train_utils import ModelTrainer, compute_class_weights
+
+CLASS_WEIGHTING = (None, "balanced")
 
 SUMMARY_METRICS = ["test_acc", "test_balanced_acc", "test_auc", "test_f1", "test_precision", "test_recall"]
 
@@ -47,6 +49,8 @@ def train_with_kfold(
     num_workers: int = 2,
     seed: int = 42,
     criterion: Optional[nn.Module] = None,
+    class_weights: Optional[str] = None,
+    num_classes: Optional[int] = None,
     scheduler_fn: Optional[Callable[[torch.optim.Optimizer], object]] = None,
     early_stop_patience: Optional[int] = None,
     output_dir: str = "experiments",
@@ -62,6 +66,9 @@ def train_with_kfold(
     model_fn / optimizer_fn / scheduler_fn: build a fresh model, optimizer and scheduler for each fold.
         optimizer_fn receives the model (so it can set per-group learning rates), e.g.
         lambda m: torch.optim.AdamW(m.parameters(), lr=1e-3).
+    class_weights: None (plain cross-entropy) or "balanced": cross-entropy weighted by n / (C * n_c),
+        computed from each fold's own training labels. num_classes defaults to max(labels) + 1.
+    Pass monitor_metric="val_auc" | "val_balanced_acc" | "val_acc" | "val_loss" (trainer kwarg) to choose the best epoch.
 
     Each fold logs to its own folder (output_dir/<run_name>_fold<k>), which is cleared first so
     reruns never append to old logs. Results are saved to output_dir/<run_name>_kfold_results.json.
@@ -69,12 +76,17 @@ def train_with_kfold(
     if len(train_dataset) != len(eval_dataset) or len(train_dataset) != len(labels):
         raise ValueError("train_dataset, eval_dataset and labels must have the same length and order.")
 
+    if class_weights not in CLASS_WEIGHTING:
+        raise ValueError(f"class_weights must be one of {CLASS_WEIGHTING}, got {class_weights}")
+    if class_weights is not None and criterion is not None:
+        raise ValueError("Pass either criterion or class_weights, not both.")
+
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    criterion = criterion or nn.CrossEntropyLoss()
     # keep the best model plus the final checkpoint instead of one checkpoint per epoch
     trainer_kwargs.setdefault("save_interval", num_epochs)
 
     labels_arr = np.asarray(labels)
+    num_classes = num_classes or int(labels_arr.max()) + 1
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     fold_results = []
 
@@ -95,13 +107,21 @@ def train_with_kfold(
         optimizer = optimizer_fn(model)
         scheduler = scheduler_fn(optimizer) if scheduler_fn is not None else None
 
+        fold_weights = None
+        if class_weights == "balanced":
+            fold_weights = compute_class_weights(labels_arr[train_idx], num_classes)
+            fold_criterion = nn.CrossEntropyLoss(weight=fold_weights.to(device))
+            print(f"Class weights (from this fold's training labels): {np.round(fold_weights.numpy(), 3).tolist()}")
+        else:
+            fold_criterion = criterion or nn.CrossEntropyLoss()
+
         trainer = ModelTrainer(
             model=model,
             device=device,
             train_loader=train_loader,
             val_loader=val_loader,
             test_loader=test_loader,
-            criterion=criterion,
+            criterion=fold_criterion,
             optimizer=optimizer,
             scheduler=scheduler,
             output_dir=output_dir,
@@ -119,6 +139,7 @@ def train_with_kfold(
             "best_epoch": results["best_epoch"],
             "monitor_metric": trainer.monitor_metric,
             "best_val_metric": float(results["best_metric"]),
+            "class_weights": fold_weights.tolist() if fold_weights is not None else None,
             "test_loss": float(results["test_loss"]),
             "test_acc": float(results["test_acc"]),
             "test_auc": float(results["test_auc"]) if results["test_auc"] is not None else None,
