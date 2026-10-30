@@ -1,17 +1,14 @@
-# Paste this into a notebook cell or src/train/train_utils.py
-import os
 import time
 import csv
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
-import random
+from typing import Optional, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 from tqdm.auto import tqdm
 
-# Optional AUC metric (if scikit-learn installed)
+# Optional AUC metric 
 try:
     from sklearn.metrics import roc_auc_score
     _HAS_SKLEARN = True
@@ -19,9 +16,6 @@ except Exception:
     _HAS_SKLEARN = False
 
 class ModelTrainer:
-    """
-    Trainer class for classification models with AMP, tqdm, checkpointing, CSV logging, and AUC support.
-    """
     def __init__(
         self,
         model: nn.Module,
@@ -38,7 +32,8 @@ class ModelTrainer:
         clip_grad_norm: Optional[float] = 1.0,
         log_interval: int = 50,
         save_interval: int = 1,
-        monitor_metric: str = "val_auc"  # or "val_acc"
+        monitor_metric: str = "val_auc",  # or "val_acc"
+        grad_accum_steps: int = 1  # optimizer step every N batches (effective batch = batch_size * N)
     ):
         self.model = model
         self.device = device if isinstance(device, torch.device) else torch.device(device)
@@ -55,6 +50,7 @@ class ModelTrainer:
         self.log_interval = log_interval
         self.save_interval = save_interval
         self.monitor_metric = monitor_metric  # "val_auc" preferred if available
+        self.grad_accum_steps = max(1, int(grad_accum_steps))
 
         # output paths
         self.output_dir = Path(output_dir) / experiment_name
@@ -113,29 +109,38 @@ class ModelTrainer:
         total = 0
         correct = 0
 
+        n_batches = len(self.train_loader)
         pbar = tqdm(self.train_loader, desc=f"Train Epoch {self.current_epoch}", leave=False)
+        self.optimizer.zero_grad()
         for batch_idx, (images, labels) in enumerate(pbar):
             images = images.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
+            # step after every grad_accum_steps batches, and on the last (possibly partial) group
+            step_now = (batch_idx + 1) % self.grad_accum_steps == 0 or (batch_idx + 1) == n_batches
+            group_size = self.grad_accum_steps if (batch_idx // self.grad_accum_steps + 1) * self.grad_accum_steps <= n_batches \
+                else n_batches % self.grad_accum_steps
 
-            self.optimizer.zero_grad()
             if self.use_amp:
                 with autocast():
                     logits = self.model(images)
                     loss = self.criterion(logits, labels)
-                self.scaler.scale(loss).backward()
-                if self.clip_grad_norm is not None:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                self.scaler.scale(loss / group_size).backward()
+                if step_now:
+                    if self.clip_grad_norm is not None:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
             else:
                 logits = self.model(images)
                 loss = self.criterion(logits, labels)
-                loss.backward()
-                if self.clip_grad_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
-                self.optimizer.step()
+                (loss / group_size).backward()
+                if step_now:
+                    if self.clip_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
 
             running_loss += loss.item() * images.size(0)
             preds = logits.argmax(dim=1)

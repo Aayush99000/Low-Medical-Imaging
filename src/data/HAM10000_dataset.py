@@ -78,6 +78,9 @@ def make_ham10000_splits(
         # largest class absorbs the rounding / minimum-per-class difference so the total is subset_size
         largest = int(props.idxmax())
         quotas[largest] -= sum(quotas.values()) - subset_size
+        if quotas[largest] < min_per_class:
+            raise ValueError(f"subset_size={subset_size} is too small for min_per_class={min_per_class} "
+                             f"across {len(HAM10000_CLASSES)} classes; use per_class instead.")
     else:
         quotas = None
 

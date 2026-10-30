@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoProcessor
+# transformers is imported lazily so DenseNet-only runs (and ClassificationHead) don't need it
 
 MEDSIGLIP_MODEL_ID = "google/medsiglip-448"
 # SigLIP preprocessing: resize to 448x448, scale to [0, 1], normalize with mean = std = 0.5 (NOT ImageNet stats)
@@ -9,13 +9,16 @@ MEDSIGLIP_DEFAULTS = {"image_size": (448, 448), "mean": (0.5, 0.5, 0.5), "std": 
 
 def get_medsiglip_preprocessing(model_id: str = MEDSIGLIP_MODEL_ID) -> dict:
     """
-    Read image size and normalization stats from the model's own AutoProcessor, so the dataset
+    Read image size and normalization stats from the model's own image processor, so the dataset
     feeds MedSigLIP exactly what it was pretrained on. Returns kwargs for the dataset classes:
         ChestXrayDataset(root, split="train", **get_medsiglip_preprocessing())
     Falls back to the SigLIP defaults if the processor can't be loaded (e.g. no Hugging Face access).
+    Works for any SigLIP checkpoint (e.g. the general-domain google/siglip-so400m-patch14-384).
     """
     try:
-        image_processor = AutoProcessor.from_pretrained(model_id).image_processor
+        # image processor only: the full AutoProcessor also loads the text tokenizer (needs sentencepiece)
+        from transformers import AutoImageProcessor
+        image_processor = AutoImageProcessor.from_pretrained(model_id)
         size = image_processor.size
         return {
             "image_size": (size["height"], size["width"]),
@@ -52,6 +55,7 @@ class ModelC_MedSigLIP(nn.Module):
         super().__init__()
         
         print(f"Loading {model_id}...")
+        from transformers import AutoModel
         self.medsiglip = AutoModel.from_pretrained(model_id, trust_remote_code=True)
         
         for param in self.medsiglip.parameters():

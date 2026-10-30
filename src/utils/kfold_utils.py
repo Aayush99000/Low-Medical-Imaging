@@ -2,7 +2,7 @@
 import json
 import shutil
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Union
+from typing import Callable, Dict, List, Optional, Sequence, Union
 import numpy as np
 import torch
 import torch.nn as nn
@@ -35,7 +35,7 @@ def _test_class_metrics(model: nn.Module, loader: DataLoader, device: torch.devi
 
 def train_with_kfold(
     model_fn: Callable[[], nn.Module],
-    optimizer_fn: Callable[[Iterable[nn.Parameter]], torch.optim.Optimizer],
+    optimizer_fn: Callable[[nn.Module], torch.optim.Optimizer],
     train_dataset: Dataset,
     eval_dataset: Dataset,
     labels: Sequence[int],
@@ -60,6 +60,8 @@ def train_with_kfold(
         (e.g. ChestXrayDataset(..., augment=True) and ChestXrayDataset(..., augment=False)).
     labels: label of each item in that order (used for stratification).
     model_fn / optimizer_fn / scheduler_fn: build a fresh model, optimizer and scheduler for each fold.
+        optimizer_fn receives the model (so it can set per-group learning rates), e.g.
+        lambda m: torch.optim.AdamW(m.parameters(), lr=1e-3).
 
     Each fold logs to its own folder (output_dir/<run_name>_fold<k>), which is cleared first so
     reruns never append to old logs. Results are saved to output_dir/<run_name>_kfold_results.json.
@@ -90,7 +92,7 @@ def train_with_kfold(
                                 shuffle=False, num_workers=num_workers, pin_memory=True)
 
         model = model_fn()
-        optimizer = optimizer_fn(model.parameters())
+        optimizer = optimizer_fn(model)
         scheduler = scheduler_fn(optimizer) if scheduler_fn is not None else None
 
         trainer = ModelTrainer(

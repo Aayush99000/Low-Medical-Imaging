@@ -14,10 +14,22 @@ Training complex CNNs from scratch on small datasets leads to severe overfitting
 
 # 🔬 Project Overview
 
-This project provides empirical validation of transfer learning efficacy in low-resource medical imaging scenarios through a controlled three-way comparison:
-Three Model Architecture Comparison
-ModelDescriptionPurposeModel A (Scratch)Simple CNN trained only on small datasetBaseline performanceModel B (ImageNet Transfer)ResNet-50 pre-trained on ImageNet, fine-tuned on medical dataGeneral feature transferModel C (Medical Transfer)Model pre-trained on broader medical corpusDomain-specific transfer
-All models are evaluated under identical conditions to ensure fair comparison.
+This project provides empirical validation of transfer learning efficacy in low-resource medical imaging scenarios through a controlled comparison.
+
+**Comparison grid** (defined in `src/protocol.py`). Each pretraining comparison keeps the architecture fixed, and every pretrained backbone is run in both training regimes, so pretraining is never mixed up with architecture or regime:
+
+| Architecture | Pretraining | Linear probe (frozen backbone) | Full fine-tuning |
+|---|---|---|---|
+| DenseNet-121 | none (random init) | — | **A_scratch** |
+| DenseNet-121 | ImageNet (general) | **B_imagenet_probe** | **B_imagenet_finetune** |
+| SigLIP-400M ViT | SigLIP (general web images) | **C0_siglip_probe** | **C0_siglip_finetune** |
+| SigLIP-400M ViT | MedSigLIP (medical) | **C_medsiglip_probe** | **C_medsiglip_finetune** |
+
+- **Effect of pretraining:** A vs B (DenseNet-121), and **C0 vs C for general vs domain-specific pretraining** (same SigLIP-400M architecture).
+- **Effect of regime:** probe vs fine-tune for the same backbone and weights.
+- Comparisons across architectures (DenseNet vs ViT) also differ in architecture and scale, and are reported as such.
+
+**Shared protocol** (`PROTOCOL` in `src/protocol.py`), identical for every model: 448×448 input, the same classification head, the same augmentation, 30 epochs, effective batch size 16 (gradient accumulation when a model needs smaller batches), AdamW with a cosine schedule, the same learning rates per parameter group, the same backbone learning-rate grid for every fine-tuned model, model selection on validation AUC, and 5-fold CV with evaluation on a held-out test set. Only the backbone, its pretrained weights and its own input normalization differ. Frozen backbones are kept in eval mode, so their BatchNorm statistics don't change during training.
 
 We utilize three distinct medical imaging datasets to simulate real-world transfer scenarios:  
 **1. Chest X-ray Images (Pneumonia)**
@@ -59,10 +71,18 @@ The dataset includes labels for 14 thoracic pathologies (including Pneumonia, Ed
 
 This project uses **PyTorch** for building and training transfer learning models. The pipeline consists of:
 
-1. **Data Preprocessing** (`image_preprocessing.py`) — Custom PyTorch Dataset class with built-in augmentation
-2. **Model Architecture** (`models.py`) — Transfer learning models (VGG19, ResNet50, InceptionV3, DenseNet121)
-3. **Training** (`train.py`) — Training loop with early stopping, checkpoint saving, and fine-tuning
-4. **Evaluation** (`evaluate.py`) — Model evaluation with comprehensive metrics
+1. **Data** (`src/data/`) — Chest X-ray and HAM10000 datasets (lesion-grouped HAM10000 splits) with built-in augmentation
+2. **Models** (`src/models/backbones.py`) — one builder for every backbone, pretraining and regime in the comparison grid
+3. **Protocol** (`src/protocol.py`) — the model grid and the shared training settings
+4. **Training** (`src/utils/train_utils.py`, `src/utils/kfold_utils.py`) — k-fold training that saves the real per-fold test results
+5. **Plots** (`src/utils/plot_utils.py`) — training curves and per-fold test results
+6. **Runner** (`run_experiment.py`) — runs one model on one dataset under the shared protocol:
+
+```bash
+python run_experiment.py --dataset pneumonia --model B_imagenet_probe
+python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch_size 4 --grad_accum_steps 4
+python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test   # quick pipeline check
+```
 
 ### Quick Start
 
@@ -220,9 +240,9 @@ Core Components:
    -BatchNorm → 1×1 conv → 2×2 avg pool.
 4. Growth rate: 32.
 5. Final feature map: 1024-dimensional.
-6. Transfer Learning Strategy:
-   -Optionally freeze early layers (often unfrozen in low-resource settings).
-   -Fine-tune mid and late layers for medical adaptation.
+6. Transfer Learning Strategy (both regimes are run, see the comparison grid):
+   -Linear probe: backbone frozen (and kept in eval mode), only the classification head is trained.
+   -Full fine-tuning: the whole network is trained, backbone at a lower learning rate than the head.
 
 <img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet( scratch)_Architecture.png" /><img width="30" height="40" alt="DenseNet_Model Architecture" src="images/Densenet_arch.png" />.
 Figure 3: ModelA architecture diagram showing the flow from input to output.
@@ -230,8 +250,9 @@ Figure 3: ModelA architecture diagram showing the flow from input to output.
 **ModelC : MedSigLIP Vision Encoder (Frozen Feature Extractor)**.
 **Architecture Details:**.
 
-Input Layer:Dimensions: 224x224x3 (Height x Width x Channels - RGB).  
-Preprocessing: Images are first resized to the MedSigLIP standard input resolution and then normalized using the specific mean and standard deviation derived from the model's original training data. This is handled by the Hugging Face AutoProcessor.  
+Input Layer:Dimensions: 448x448x3 (Height x Width x Channels - RGB).  
+Preprocessing: Images are resized to 448x448 and normalized with the mean and standard deviation from the model's own Hugging Face image processor (mean = std = 0.5 for SigLIP models, not ImageNet stats), via `get_medsiglip_preprocessing()` in `src/models/ModelC.py`.  
+Comparison: the general-domain SigLIP-400M (`google/siglip-so400m-patch14-384`, Model C0) is run with the same architecture and protocol, so C0 vs C isolates domain-specific pretraining. Both are run as a linear probe and with full fine-tuning.  
 **Feature Extraction:**  
 Backbone/Encoder Architecture: MedSigLIP Vision Encoder (based on the SigLIP-400M architecture). Status: Frozen (Non-trainable weights).  
 Function: Extracts high-level, medically-aware features learned from millions of medical image-text pairs. It processes the input image and generates a single, dense feature vector.  
