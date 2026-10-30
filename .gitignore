@@ -158,3 +158,10 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Local datasets and plot/image folders
+CheXpert_Dataset/
+HAM10000_Dataset/
+chest_xray_pheumonia/
+DS_Project_Plots/
+DS_project_images/
