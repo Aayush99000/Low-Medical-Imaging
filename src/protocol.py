@@ -40,3 +40,21 @@ PROTOCOL = {
 # Same small learning-rate grid for every fine-tuned model, selected on the CV validation folds,
 # so no model gets more tuning than another.
 BACKBONE_LR_GRID = (1e-5, 3e-5, 1e-4)
+
+# Per-dataset settings, applied to every model on that dataset (so they never favour one model).
+# HAM10000 is ~67% nv: without class weighting a model can score well on accuracy by predicting nv.
+DATASET_PROTOCOL = {
+    "pneumonia": {},
+    "ham10000": {"class_weights": "balanced"},
+    "chexpert": {},
+}
+
+# The planned comparisons (a, b), tested as a - b and Holm-corrected together (compare_models.py).
+# Each one changes a single factor: pretraining (same architecture and regime) or the regime (same weights).
+COMPARISONS = (
+    ("B_imagenet_finetune", "A_scratch"),              # ImageNet vs random init, DenseNet-121
+    ("C_medsiglip_probe", "C0_siglip_probe"),          # medical vs general pretraining, SigLIP-400M
+    ("C_medsiglip_finetune", "C0_siglip_finetune"),
+    ("B_imagenet_finetune", "B_imagenet_probe"),       # fine-tuning vs linear probe
+    ("C_medsiglip_finetune", "C_medsiglip_probe"),
+)

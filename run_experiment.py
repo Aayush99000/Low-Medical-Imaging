@@ -3,7 +3,7 @@
 Examples:
     python run_experiment.py --dataset pneumonia --model B_imagenet_probe
     python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch_size 4 --grad_accum_steps 4
-    python run_experiment.py --dataset ham10000 --model B_imagenet_probe --class_weights balanced --monitor_metric val_balanced_acc
+    python run_experiment.py --dataset ham10000 --model B_imagenet_probe --monitor_metric val_balanced_acc  # class-weighted by default
     python run_experiment.py --dataset chexpert --model C_medsiglip_probe     # Pleural Effusion, frontal views
     python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test     # tiny run to check the pipeline
     python run_experiment.py --dataset pneumonia --model B_imagenet_probe --subset_seeds 0   # one subset draw only
@@ -18,9 +18,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from src.protocol import MODEL_ZOO, PROTOCOL
+from src.protocol import DATASET_PROTOCOL, MODEL_ZOO, PROTOCOL
 from src.models.backbones import build_model, get_preprocessing, make_optimizer, count_parameters
-from src.utils.kfold_utils import summarize_repeated_subsets, train_with_kfold
+from src.utils.kfold_utils import summarize_repeated_subsets, test_predictions_path, train_with_kfold
+from src.utils.stats_utils import BOOTSTRAP_METRICS, bootstrap_test_metric
 from src.utils.subset_utils import create_subset_indices
 
 
@@ -50,6 +51,7 @@ def parse_args():
     p.add_argument("--class_weights", choices=["none", "balanced"], help="balanced = class-weighted cross-entropy")
     p.add_argument("--monitor_metric", choices=["val_auc", "val_balanced_acc", "val_acc", "val_loss"],
                    help="metric that picks the best epoch")
+    p.add_argument("--n_boot", type=int, default=2000, help="bootstrap resamples for the test-set CIs")
     p.add_argument("--smoke_test", action="store_true", help="tiny subset / test set, 2 folds, 1 epoch, 64px")
     return p.parse_args()
 
@@ -107,7 +109,7 @@ def build_chexpert(args, cfg, prep, subset_seed):
 
 def main():
     args = parse_args()
-    cfg = dict(PROTOCOL, per_class=None)
+    cfg = dict(PROTOCOL, per_class=None, **DATASET_PROTOCOL[args.dataset])
     if args.smoke_test:  # applied first, so explicit arguments still win
         cfg.update(num_epochs=1, n_folds=2, image_size=(64, 64), batch_size=4, per_class=6, subset_seeds=(0, 1))
     for key, arg in [("num_epochs", "epochs"), ("batch_size", "batch_size"), ("grad_accum_steps", "grad_accum_steps"),
@@ -162,10 +164,16 @@ def main():
         )
 
     summary = summarize_repeated_subsets(results_by_subset, title=base_name)
+    preds = {s: test_predictions_path(args.out_dir, f"{base_name}_sub{s}") for s in cfg["subset_seeds"]}
+    bootstrap = {m: bootstrap_test_metric(preds, m, n_boot=args.n_boot) for m in BOOTSTRAP_METRICS}
+    for m, r in bootstrap.items():
+        print(f"{m:18s} {r['mean']:.4f}  95% CI test set [{r['ci_test_set'][0]:.4f}, {r['ci_test_set'][1]:.4f}]  "
+              f"test set + draws [{r['ci_total'][0]:.4f}, {r['ci_total'][1]:.4f}]")
     with open(Path(args.out_dir) / f"{base_name}_subsets_summary.json", "w") as f:
         json.dump({"subset_seeds": list(cfg["subset_seeds"]),
                    "results_files": {s: f"{base_name}_sub{s}_kfold_results.json" for s in cfg["subset_seeds"]},
-                   "summary": summary}, f, indent=2)
+                   "predictions_files": {s: p.name for s, p in preds.items()},
+                   "summary": summary, "bootstrap": bootstrap}, f, indent=2)
 
     run_config = {"dataset": args.dataset, "model": args.model, **spec, "protocol": cfg,
                   "preprocessing": prep, "device": str(device), "n_test": len(test_ds),

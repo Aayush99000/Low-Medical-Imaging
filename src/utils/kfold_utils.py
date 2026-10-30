@@ -15,19 +15,25 @@ from src.utils.train_utils import ModelTrainer, compute_class_weights
 
 CLASS_WEIGHTING = (None, "balanced")
 
-SUMMARY_METRICS = ["test_acc", "test_balanced_acc", "test_auc", "test_f1", "test_precision", "test_recall"]
+# headline metrics first: on imbalanced data (HAM10000) accuracy mostly tracks the majority class
+SUMMARY_METRICS = ["test_auc", "test_balanced_acc", "test_f1", "test_acc", "test_precision", "test_recall"]
 
 
-def _test_class_metrics(model: nn.Module, loader: DataLoader, device: torch.device) -> Dict[str, float]:
-    """Macro-averaged precision / recall / F1 and balanced accuracy on the test set."""
+def _test_predictions(model: nn.Module, loader: DataLoader, device: torch.device):
+    """float32 softmax probabilities (N, C) and labels (N,) on the test set, in loader order."""
     model.eval()
-    preds, labels = [], []
+    probs, labels = [], []
     with torch.no_grad():
         for images, y in loader:
-            logits = model(images.to(device))
-            preds.append(logits.argmax(dim=1).cpu().numpy())
+            logits = model(images.to(device)).float()
+            probs.append(torch.softmax(logits, dim=1).cpu().numpy())
             labels.append(np.asarray(y))
-    preds, labels = np.concatenate(preds), np.concatenate(labels)
+    return np.concatenate(probs).astype(np.float32), np.concatenate(labels).astype(int)
+
+
+def _test_class_metrics(probs: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
+    """Macro-averaged precision / recall / F1 and balanced accuracy on the test set."""
+    preds = probs.argmax(axis=1)
     return {
         "test_balanced_acc": float(balanced_accuracy_score(labels, preds)),
         "test_f1": float(f1_score(labels, preds, average="macro", zero_division=0)),
@@ -72,7 +78,9 @@ def train_with_kfold(
     Pass monitor_metric="val_auc" | "val_balanced_acc" | "val_acc" | "val_loss" (trainer kwarg) to choose the best epoch.
 
     Each fold logs to its own folder (output_dir/<run_name>_fold<k>), which is cleared first so
-    reruns never append to old logs. Results are saved to output_dir/<run_name>_kfold_results.json.
+    reruns never append to old logs. Results are saved to output_dir/<run_name>_kfold_results.json, and every
+    fold model's test probabilities to output_dir/<run_name>_test_predictions.npz (labels (N,), probs
+    (n_folds, N, C)) for bootstrap CIs and DeLong tests (src/utils/stats_utils.py).
     """
     if len(train_dataset) != len(eval_dataset) or len(train_dataset) != len(labels):
         raise ValueError("train_dataset, eval_dataset and labels must have the same length and order.")
@@ -89,7 +97,7 @@ def train_with_kfold(
     labels_arr = np.asarray(labels)
     num_classes = num_classes or int(labels_arr.max()) + 1
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
-    fold_results = []
+    fold_results, fold_probs, test_labels = [], [], None
 
     for fold_idx, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(labels_arr)), labels_arr)):
         fold = fold_idx + 1
@@ -134,7 +142,9 @@ def train_with_kfold(
         )
         results = trainer.train(num_epochs=num_epochs, early_stop_patience=early_stop_patience)
         # trainer.model now holds the best checkpoint (reloaded by ModelTrainer.train)
-        class_metrics = _test_class_metrics(trainer.model, test_loader, trainer.device)
+        probs, test_labels = _test_predictions(trainer.model, test_loader, trainer.device)
+        fold_probs.append(probs)
+        class_metrics = _test_class_metrics(probs, test_labels)
 
         fold_results.append({
             "fold": fold,
@@ -158,7 +168,12 @@ def train_with_kfold(
     with open(results_path, "w") as f:
         json.dump(fold_results, f, indent=2, default=float)
     print(f"[kfold_utils] Saved fold results to {results_path}")
+    np.savez_compressed(test_predictions_path(output_dir, run_name), labels=test_labels, probs=np.stack(fold_probs))
     return fold_results
+
+
+def test_predictions_path(output_dir: str, run_name: str) -> Path:
+    return Path(output_dir) / f"{run_name}_test_predictions.npz"
 
 
 def load_kfold_results(results_path: str) -> List[Dict]:

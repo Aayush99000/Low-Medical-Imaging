@@ -138,7 +138,7 @@ def plot_kfold_curves(
 
 def plot_kfold_test_results(
     results: Union[str, List[Dict]],
-    metrics: Sequence[str] = ("test_acc", "test_balanced_acc", "test_auc", "test_f1"),
+    metrics: Sequence[str] = ("test_auc", "test_balanced_acc", "test_f1", "test_acc"),
     title: Optional[str] = None,
     save_path: Optional[str] = None,
 ):

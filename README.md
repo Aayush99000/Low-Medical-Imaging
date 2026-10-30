@@ -29,9 +29,14 @@ This project provides empirical validation of transfer learning efficacy in low-
 - **Effect of regime:** probe vs fine-tune for the same backbone and weights.
 - Comparisons across architectures (DenseNet vs ViT) also differ in architecture and scale, and are reported as such.
 
-**Shared protocol** (`PROTOCOL` in `src/protocol.py`), identical for every model: 448×448 input, the same classification head, the same augmentation, 30 epochs, effective batch size 16 (gradient accumulation when a model needs smaller batches), AdamW with a cosine schedule, the same learning rates per parameter group, the same backbone learning-rate grid for every fine-tuned model, model selection on validation AUC, and 5-fold CV with evaluation on a held-out test set. Only the backbone, its pretrained weights and its own input normalization differ. Frozen backbones are kept in eval mode, so their BatchNorm statistics don't change during training.
+**Shared protocol** (`PROTOCOL` in `src/protocol.py`), identical for every model: 448×448 input, the same classification head, the same augmentation, 30 epochs, effective batch size 16 (gradient accumulation when a model needs smaller batches), AdamW with a cosine schedule, the same learning rates per parameter group, the same backbone learning-rate grid for every fine-tuned model, model selection on validation AUC, and 5-fold CV with evaluation on a held-out test set. Only the backbone, its pretrained weights and its own input normalization differ. Frozen backbones are kept in eval mode, so their BatchNorm statistics don't change during training. Per-dataset settings (`DATASET_PROTOCOL`) also apply to every model: HAM10000 (~67% nv) uses class-weighted cross-entropy, so a model can't score well by predicting the majority class.
 
 **Repeated subset draws.** The 5 folds of one 300-image subset reuse the same images, so their spread shows training variation but not how much a result depends on which 300 images were drawn. Each model is therefore trained on 5 independent subset draws (`subset_seeds` in `PROTOCOL`), with the full 5-fold CV on each and the test set fixed. A draw's score is the mean of its fold models. The run reports the mean across draws, the between-draw SD with a 95% t-interval, and the within-draw fold SD (`summarize_repeated_subsets`). Every model uses the same draws, so models are compared by the paired per-draw difference (`compare_paired_subsets`). Fold model initialization, data order and augmentation are seeded, so reruns give the same numbers.
+
+**Metrics and statistics.** Headline metrics are macro AUC (binary AUC for pneumonia and CheXpert), balanced accuracy and macro-F1; accuracy is reported but not used to rank models, since on HAM10000 it mostly tracks the majority class. Every fold model's float32 test probabilities are saved, and `src/utils/stats_utils.py` computes:
+- 95% CIs by stratified bootstrap over test cases (`ci_test_set`), and a two-level bootstrap that also resamples the subset draws (`ci_total`), so the interval covers both the finite test set and the choice of training images;
+- paired model comparisons: a two-level paired bootstrap of the difference (CI and two-sided p-value) and, for binary AUC, DeLong's test on each draw's fold-ensemble scores;
+- Holm-Bonferroni correction over the planned comparisons (`COMPARISONS` in `src/protocol.py`), each of which changes a single factor.
 
 We utilize three distinct medical imaging datasets to simulate real-world transfer scenarios:  
 **1. Chest X-ray Images (Pneumonia)**
@@ -81,16 +86,19 @@ This project uses **PyTorch** for building and training transfer learning models
 2. **Models** (`src/models/backbones.py`) — one builder for every backbone, pretraining and regime in the comparison grid
 3. **Protocol** (`src/protocol.py`) — the model grid and the shared training settings
 4. **Training** (`src/utils/train_utils.py`, `src/utils/kfold_utils.py`) — k-fold training on each subset draw, saving the real per-fold test results and the across-draw summary
-5. **Plots** (`src/utils/plot_utils.py`) — training curves and per-fold test results
-6. **Runner** (`run_experiment.py`) — runs one model on one dataset under the shared protocol:
+5. **Statistics** (`src/utils/stats_utils.py`, `compare_models.py`) — bootstrap CIs, DeLong's test, paired comparisons with Holm correction
+6. **Plots** (`src/utils/plot_utils.py`) — training curves and per-fold test results
+7. **Runner** (`run_experiment.py`) — runs one model on one dataset under the shared protocol; `compare_models.py` then builds the results table and runs the planned comparisons:
 
 ```bash
 python run_experiment.py --dataset pneumonia --model B_imagenet_probe
 python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch_size 4 --grad_accum_steps 4
-python run_experiment.py --dataset ham10000 --model B_imagenet_probe --class_weights balanced --monitor_metric val_balanced_acc
+python run_experiment.py --dataset ham10000 --model B_imagenet_probe --monitor_metric val_balanced_acc
 python run_experiment.py --dataset chexpert --model C_medsiglip_probe   # Pleural Effusion, frontal views
 python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test   # quick pipeline check
 python run_experiment.py --dataset pneumonia --model B_imagenet_probe --subset_seeds 0   # one subset draw instead of all 5
+python compare_models.py --dataset pneumonia                                # table with 95% CIs + planned comparisons
+python compare_models.py --dataset ham10000 --metric test_balanced_acc
 ```
 
 ### Quick Start
