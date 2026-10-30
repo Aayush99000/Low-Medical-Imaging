@@ -34,6 +34,7 @@ def make_ham10000_splits(
     per_class: Optional[int] = None,
     min_per_class: int = 5,
     seed: int = 42,
+    subset_seed: Optional[int] = None,
     save_path: Optional[str] = None,
 ) -> Dict:
     """
@@ -45,12 +46,15 @@ def make_ham10000_splits(
        (or per_class images per class). Each class gets at least min_per_class images so k-fold CV can
        stratify; keep min_per_class >= n_folds.
     Because the subset has at most one image per lesion, a plain StratifiedKFold on it has no lesion leakage.
+    seed fixes the test split; subset_seed (default: seed) picks the training subset, so repeated subset
+    draws keep the same test set.
 
     metadata_csv: HAM10000_metadata.csv (Harvard Dataverse, doi:10.7910/DVN/DBW86T)
     image_dirs: folders searched recursively for the original ISIC_*.jpg images
     Returns lists of image paths / labels for "subset", "test" and the full "train_pool", plus class names.
     """
-    rng = np.random.default_rng(seed)
+    subset_seed = seed if subset_seed is None else subset_seed
+    rng = np.random.default_rng(subset_seed)
     df = pd.read_csv(metadata_csv)
     id_to_path = _find_original_images(image_dirs)
     missing = sorted(set(df["image_id"]) - set(id_to_path))
@@ -69,7 +73,7 @@ def make_ham10000_splits(
     assert not set(train_pool["lesion_id"]) & set(test["lesion_id"]), "lesion leakage between train and test"
 
     # 2. One image per lesion, then a stratified (or per-class) subset
-    one_per_lesion = train_pool.sample(frac=1.0, random_state=seed).drop_duplicates("lesion_id")
+    one_per_lesion = train_pool.sample(frac=1.0, random_state=subset_seed).drop_duplicates("lesion_id")
     if per_class is not None:
         quotas = {c: per_class for c in range(len(HAM10000_CLASSES))}
     elif subset_size is not None:
@@ -93,7 +97,7 @@ def make_ham10000_splits(
             if len(pool) < k:
                 raise ValueError(f"Not enough lesions in class {HAM10000_CLASSES[c]}: requested {k}, available {len(pool)}")
             parts.append(pool.iloc[rng.choice(len(pool), size=k, replace=False)])
-        subset = pd.concat(parts).sample(frac=1.0, random_state=seed)
+        subset = pd.concat(parts).sample(frac=1.0, random_state=subset_seed)
 
     def _counts(part):
         return {HAM10000_CLASSES[c]: int(n) for c, n in part["label"].value_counts().sort_index().items()}
@@ -104,7 +108,7 @@ def make_ham10000_splits(
         "test_images": test["path"].tolist(), "test_labels": test["label"].tolist(),
         "train_pool_images": train_pool["path"].tolist(), "train_pool_labels": train_pool["label"].tolist(),
         "info": {
-            "seed": int(seed),
+            "seed": int(seed), "subset_seed": int(subset_seed),
             "n_test_folds": n_splits,
             "n_train_pool": len(train_pool), "n_train_pool_lesions": int(train_pool["lesion_id"].nunique()),
             "n_test": len(test), "n_test_lesions": int(test["lesion_id"].nunique()),

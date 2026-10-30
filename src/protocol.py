@@ -21,7 +21,8 @@ PROTOCOL = {
     "grad_accum_steps": 1,           # raise this (and lower batch_size) when a model doesn't fit in memory
     "num_epochs": 30,
     "n_folds": 5,
-    "seed": 42,
+    "seed": 42,                      # fold split, model init, data order (and the HAM10000 test split)
+    "subset_seeds": (0, 1, 2, 3, 4), # independent draws of the training subset; the test set stays fixed
     "subset_size": 300,
     "augmentation_strength": 0.5,
     "head_dropout": 0.3,             # same classification head (src.models.ModelC.ClassificationHead) for all

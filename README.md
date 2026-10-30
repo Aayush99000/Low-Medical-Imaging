@@ -31,6 +31,8 @@ This project provides empirical validation of transfer learning efficacy in low-
 
 **Shared protocol** (`PROTOCOL` in `src/protocol.py`), identical for every model: 448×448 input, the same classification head, the same augmentation, 30 epochs, effective batch size 16 (gradient accumulation when a model needs smaller batches), AdamW with a cosine schedule, the same learning rates per parameter group, the same backbone learning-rate grid for every fine-tuned model, model selection on validation AUC, and 5-fold CV with evaluation on a held-out test set. Only the backbone, its pretrained weights and its own input normalization differ. Frozen backbones are kept in eval mode, so their BatchNorm statistics don't change during training.
 
+**Repeated subset draws.** The 5 folds of one 300-image subset reuse the same images, so their spread shows training variation but not how much a result depends on which 300 images were drawn. Each model is therefore trained on 5 independent subset draws (`subset_seeds` in `PROTOCOL`), with the full 5-fold CV on each and the test set fixed. A draw's score is the mean of its fold models. The run reports the mean across draws, the between-draw SD with a 95% t-interval, and the within-draw fold SD (`summarize_repeated_subsets`). Every model uses the same draws, so models are compared by the paired per-draw difference (`compare_paired_subsets`). Fold model initialization, data order and augmentation are seeded, so reruns give the same numbers.
+
 We utilize three distinct medical imaging datasets to simulate real-world transfer scenarios:  
 **1. Chest X-ray Images (Pneumonia)**
 Source: Guangzhou Women and Children's Medical Center  
@@ -67,7 +69,7 @@ The HAM10000 dataset, a large collection of multi-source dermatoscopic images of
 The dataset includes labels for 14 thoracic pathologies (including Pneumonia, Edema, Atelectasis, Pleural Effusion, etc.) with four label types: positive, negative, uncertain, and unmentioned.
 This study uses one binary task, Pleural Effusion, on frontal (AP/PA) views (`make_chexpert_splits` in `src/data/chexpert_dataset.py`):
 - Test set: the official validation split, 202 frontal images from 200 patients labelled by radiologist consensus (64 positive). None of these patients are in train.csv. With ~200 images, report the test AUC with a confidence interval.
-- Training subset: train.csv images with a definite label (uncertain labels dropped; unmentioned treated as negative), one image per patient, then a stratified sample of 300 (91 positive with seed 42).
+- Training subset: train.csv images with a definite label (uncertain labels dropped; unmentioned treated as negative), one image per patient, then a stratified sample of 300 (about 30% positive, as in the training pool).
 - `--chexpert_task` selects another finding (any train.csv column) with the same rules.
 <img width="80" height="90" alt="Screenshot 2025-11-12 at 16 03 42" src="images/img3.png" />
 
@@ -78,7 +80,7 @@ This project uses **PyTorch** for building and training transfer learning models
 1. **Data** (`src/data/`) — Chest X-ray, HAM10000 and CheXpert datasets (lesion-grouped HAM10000 splits, patient-level CheXpert splits) with built-in augmentation
 2. **Models** (`src/models/backbones.py`) — one builder for every backbone, pretraining and regime in the comparison grid
 3. **Protocol** (`src/protocol.py`) — the model grid and the shared training settings
-4. **Training** (`src/utils/train_utils.py`, `src/utils/kfold_utils.py`) — k-fold training that saves the real per-fold test results
+4. **Training** (`src/utils/train_utils.py`, `src/utils/kfold_utils.py`) — k-fold training on each subset draw, saving the real per-fold test results and the across-draw summary
 5. **Plots** (`src/utils/plot_utils.py`) — training curves and per-fold test results
 6. **Runner** (`run_experiment.py`) — runs one model on one dataset under the shared protocol:
 
@@ -88,6 +90,7 @@ python run_experiment.py --dataset ham10000 --model C_medsiglip_finetune --batch
 python run_experiment.py --dataset ham10000 --model B_imagenet_probe --class_weights balanced --monitor_metric val_balanced_acc
 python run_experiment.py --dataset chexpert --model C_medsiglip_probe   # Pleural Effusion, frontal views
 python run_experiment.py --dataset pneumonia --model A_scratch --smoke_test   # quick pipeline check
+python run_experiment.py --dataset pneumonia --model B_imagenet_probe --subset_seeds 0   # one subset draw instead of all 5
 ```
 
 ### Quick Start

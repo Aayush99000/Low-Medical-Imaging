@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.metrics import balanced_accuracy_score, f1_score, precision_score, recall_score
+from scipy import stats
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader, Dataset, Subset
 
@@ -103,6 +104,9 @@ def train_with_kfold(
         val_loader = DataLoader(Subset(eval_dataset, val_idx.tolist()), batch_size=batch_size,
                                 shuffle=False, num_workers=num_workers, pin_memory=True)
 
+        # same init / data order / augmentation stream for a given (seed, fold), whatever ran before
+        torch.manual_seed(seed + fold)
+        np.random.seed(seed + fold)
         model = model_fn()
         optimizer = optimizer_fn(model)
         scheduler = scheduler_fn(optimizer) if scheduler_fn is not None else None
@@ -187,3 +191,83 @@ def summarize_kfold_results(
         summary[m] = {"mean": float(vals.mean()), "std": std, "per_fold": vals.tolist(), "n": int(len(vals))}
         print(f"{m:18s} {vals.mean():.4f} ± {std:.4f}   per fold: {np.round(vals, 4).tolist()}")
     return summary
+
+
+def _fold_values(folds: Union[str, List[Dict]], metric: str) -> np.ndarray:
+    folds = load_kfold_results(folds) if isinstance(folds, str) else folds
+    vals = np.array([f[metric] for f in folds if f.get(metric) is not None], dtype=float)
+    return vals[~np.isnan(vals)]
+
+
+def _subset_score(folds: Union[str, List[Dict]], metric: str) -> float:
+    """One subset's score: the mean test metric of its fold models."""
+    vals = _fold_values(folds, metric)
+    return float(vals.mean()) if len(vals) else float("nan")
+
+
+def _t_interval(vals: np.ndarray, level: float = 0.95) -> List[float]:
+    if len(vals) < 2:
+        return [float("nan"), float("nan")]
+    half = stats.t.ppf(0.5 + level / 2, len(vals) - 1) * vals.std(ddof=1) / np.sqrt(len(vals))
+    return [float(vals.mean() - half), float(vals.mean() + half)]
+
+
+def summarize_repeated_subsets(
+    results_by_subset: Dict[int, Union[str, List[Dict]]],
+    metrics: Sequence[str] = SUMMARY_METRICS,
+    title: Optional[str] = None,
+) -> Dict[str, Dict]:
+    """
+    Aggregate k-fold runs repeated on independent draws of the training subset (same test set).
+
+    results_by_subset: {subset_seed: train_with_kfold results or the path of their JSON}.
+    The subset draw is the replicate: each subset scores the mean of its fold models, and the spread
+    across subsets measures how much a result depends on which images were sampled. The folds of one
+    subset reuse the same images, so their spread (within_subset_std) understates that.
+    The fixed test set adds its own sampling error on top; it is not included here.
+    Returns {metric: {"mean", "between_subset_std", "ci95", "within_subset_std", "per_subset", "n_subsets"}}.
+    """
+    print(f"\n{'='*60}\nREPEATED-SUBSET SUMMARY{' - ' + title if title else ''}\n{'='*60}")
+    seeds = sorted(results_by_subset)
+    folds_by_seed = {s: load_kfold_results(r) if isinstance(r, str) else r for s, r in results_by_subset.items()}
+    summary = {}
+    for m in metrics:
+        per_subset = {s: _subset_score(folds_by_seed[s], m) for s in seeds}
+        vals = np.array([v for v in per_subset.values() if not np.isnan(v)])
+        if len(vals) == 0:
+            continue
+        within = [v.std(ddof=1) for v in (_fold_values(folds_by_seed[s], m) for s in seeds) if len(v) > 1]
+        summary[m] = {
+            "mean": float(vals.mean()),
+            "between_subset_std": float(vals.std(ddof=1)) if len(vals) > 1 else 0.0,
+            "ci95": _t_interval(vals),
+            "within_subset_std": float(np.mean(within)) if within else float("nan"),
+            "per_subset": per_subset,
+            "n_subsets": int(len(vals)),
+        }
+        r = summary[m]
+        print(f"{m:18s} {r['mean']:.4f}  between-subset SD {r['between_subset_std']:.4f}  "
+              f"95% CI [{r['ci95'][0]:.4f}, {r['ci95'][1]:.4f}]  within-subset (fold) SD {r['within_subset_std']:.4f}")
+    return summary
+
+
+def compare_paired_subsets(
+    results_a: Dict[int, Union[str, List[Dict]]],
+    results_b: Dict[int, Union[str, List[Dict]]],
+    metric: str = "test_auc",
+) -> Dict:
+    """
+    Paired difference (a - b) of one metric over the subset draws both models were trained on.
+
+    Pairing on the same subsets (and the same test set) removes the variation that both models share,
+    so a difference can be clear even when the two models' between-subset intervals overlap.
+    """
+    seeds = sorted(set(results_a) & set(results_b))
+    if len(seeds) < 2:
+        raise ValueError("Need at least 2 shared subset seeds to compare models.")
+    diffs = np.array([_subset_score(results_a[s], metric) - _subset_score(results_b[s], metric) for s in seeds])
+    return {
+        "metric": metric, "subset_seeds": seeds, "per_subset_diff": diffs.tolist(),
+        "mean_diff": float(diffs.mean()), "std_diff": float(diffs.std(ddof=1)), "ci95": _t_interval(diffs),
+        "n_a_better": int((diffs > 0).sum()),
+    }
