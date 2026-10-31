@@ -1,7 +1,7 @@
 '''Results table with bootstrap CIs and the planned model comparisons (paired bootstrap, DeLong, Holm).
 
-Reads the files run_experiment.py writes to --out_dir (<dataset>_<model>_subsets_summary.json and the
-test-prediction files it lists), so every model must have been run with the same subset seeds.
+Reads the test-prediction files run_experiment.py writes to --out_dir (<dataset>_<model>_sub<seed>_test_predictions.npz),
+whether the draws ran in one job or as a job array. Comparisons use the subset seeds both models have.
 
 Examples:
     python compare_models.py --dataset pneumonia
@@ -10,6 +10,7 @@ Examples:
 '''
 import argparse
 import json
+import re
 from pathlib import Path
 
 from src.protocol import COMPARISONS, MODEL_ZOO
@@ -28,12 +29,10 @@ def parse_args():
 
 
 def load_predictions(out_dir, dataset, model, suffix):
-    path = Path(out_dir) / f"{dataset}_{model}{suffix}_subsets_summary.json"
-    if not path.exists():
-        return None
-    with open(path) as f:
-        files = json.load(f)["predictions_files"]
-    return {int(s): Path(out_dir) / name for s, name in files.items()}
+    """{subset_seed: predictions file} for every draw of this run, including draws run as separate jobs."""
+    pattern = re.compile(rf"^{re.escape(f'{dataset}_{model}{suffix}')}_sub(\d+)_test_predictions\.npz$")
+    files = {int(m.group(1)): p for p in Path(out_dir).glob("*_test_predictions.npz") if (m := pattern.match(p.name))}
+    return files or None
 
 
 def main():
@@ -45,11 +44,11 @@ def main():
 
     table = {}
     print(f"\n{args.dataset}: mean over subset draws, 95% CI (test set + draws)")
-    print(f"{'model':24s}" + "".join(f"{m:>28s}" for m in BOOTSTRAP_METRICS))
+    print(f"{'model':32s}" + "".join(f"{m:>28s}" for m in BOOTSTRAP_METRICS))
     for model, p in preds.items():
         table[model] = {m: bootstrap_test_metric(p, m, n_boot=args.n_boot) for m in BOOTSTRAP_METRICS}
         cells = [f"{r['mean']:.3f} [{r['ci_total'][0]:.3f}, {r['ci_total'][1]:.3f}]" for r in table[model].values()]
-        print(f"{model:24s}" + "".join(f"{c:>28s}" for c in cells))
+        print(f"{f'{model} ({len(p)} draws)':32s}" + "".join(f"{c:>28s}" for c in cells))
 
     pairs = [tuple(p.split(":")) for p in args.pairs] if args.pairs else list(COMPARISONS)
     pairs = [(a, b) for a, b in pairs if a in preds and b in preds]

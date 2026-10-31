@@ -165,3 +165,6 @@ HAM10000_Dataset/
 chest_xray_pheumonia/
 DS_Project_Plots/
 DS_project_images/
+
+# Slurm job logs
+logs/
