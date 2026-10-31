@@ -15,9 +15,13 @@
 set -euo pipefail
 
 ENV=${LOWMED_ENV:-/scratch/$USER/envs/lowmed}
-export HF_HOME=/scratch/$USER/.cache/huggingface   # MedSigLIP token and weights (hf auth login with the same HF_HOME)
+export HF_HOME=/scratch/$USER/.cache/huggingface   # MedSigLIP / SigLIP weights
 export TORCH_HOME=/scratch/$USER/.cache/torch      # torchvision ImageNet weights
 cd "$SLURM_SUBMIT_DIR"
+# HF_TOKEN for the gated MedSigLIP weights, from .env in the repo root (gitignored; chmod 600)
+if [[ -f .env ]]; then
+    set -a; source .env; set +a
+fi
 
 EXTRA=()
 if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
