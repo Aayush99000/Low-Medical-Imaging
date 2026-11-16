@@ -3,7 +3,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=64G                 # SigLIP-400M probes peak at ~50 GB host RAM; 32G let the 187 GB V100 nodes overfill
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/%x_%j.out
 # Run one model on one dataset on a GPU node; any run_experiment.py arguments pass through. From the repo root:
