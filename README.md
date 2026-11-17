@@ -128,8 +128,9 @@ Softmax turns the logits into probabilities, and the loss is cross-entropy (clas
 3. **Protocol** (`src/protocol.py`) — the model grid, the shared training settings and the planned comparisons
 4. **Training** (`src/utils/train_utils.py`, `src/utils/kfold_utils.py`) — k-fold training on each subset draw, saving the real per-fold test results, test probabilities and the across-draw summary
 5. **Statistics** (`src/utils/stats_utils.py`, `compare_models.py`) — bootstrap CIs, DeLong's test, paired comparisons with Holm correction
-6. **Plots** (`src/utils/plot_utils.py`) — training curves and per-fold test results
+6. **Plots** (`src/utils/plot_utils.py`) — training curves, per-fold test results and data-efficiency curves
 7. **Runner** (`run_experiment.py`) — runs one model on one dataset under the shared protocol; `compare_models.py` then builds the results table and runs the planned comparisons
+8. **Data-efficiency curves** (`extract_features.py`, `probe_curves.py`) — linear probes on cached frozen features across training-set sizes (see below)
 
 ```bash
 python run_experiment.py --dataset pneumonia --model B_imagenet_probe
@@ -143,6 +144,22 @@ python compare_models.py --dataset ham10000 --metric test_balanced_acc
 ```
 
 Outputs go to `experiments/` (`--out_dir`): per draw `<dataset>_<model>_sub<seed>_kfold_results.json` and `..._test_predictions.npz`, per run `..._subsets_summary.json` and `..._config.json`, and the saved split ids.
+
+### Data-efficiency curves
+
+A frozen backbone gives the same features in every epoch, so the linear-probe models can be studied at many training-set sizes cheaply:
+
+1. `extract_features.py` runs each probe model's frozen backbone once over the whole training pool and the test set (protocol resolution and normalization, no augmentation) and caches the features in `features/`.
+2. `probe_curves.py` fits an L2 logistic regression per model, training-set size (25 to the whole pool) and subset draw (20 per size; 5 above 3,000 images), with C chosen by stratified 5-fold CV on log-loss. Subsets come from the same samplers as `run_experiment.py`, so every model sees the same images and the n=300 draws 0–4 are the subsets of the main probe runs; the script compares the two at n=300.
+
+Per size it reports each model's test AUC and balanced accuracy with 95% CIs (test set + draws), the paired comparisons with Holm correction, and how often a single draw orders each pair the same way as the mean over draws.
+
+```bash
+python extract_features.py --dataset pneumonia --model C_medsiglip_probe      # once per probe model
+python probe_curves.py --dataset pneumonia                                    # CPU only, minutes
+```
+
+Outputs go to `experiments_curves/`: `<dataset>_curves.json`, `<dataset>_curves.png` and the test predictions for every size and draw.
 
 ## 🚀 Quick Start
 
@@ -197,7 +214,7 @@ MedSigLIP is gated. Accept the Health AI Developer Foundations terms on the [mod
 HF_TOKEN=hf_...
 ```
 
-`slurm/run_experiment.sbatch` loads `.env` automatically; for local runs, `export HF_TOKEN=...` or run `hf auth login`.
+`slurm/run_experiment.sbatch` and `slurm/extract_features.sbatch` load `.env` automatically; for local runs, `export HF_TOKEN=...` or run `hf auth login`.
 
 ## 🖥️ Running on the Explorer cluster (Northeastern HPC)
 
@@ -232,6 +249,13 @@ sbatch slurm/submit_queue.sh logs/queue.txt
 /scratch/$USER/envs/lowmed/bin/python compare_models.py --dataset pneumonia
 ```
 
+For the data-efficiency curves, cache each probe model's features on a GPU node, then fit the probes on a CPU node:
+
+```bash
+sbatch slurm/extract_features.sbatch --dataset chexpert --model C_medsiglip_probe   # ~1h10m on a V100 for CheXpert's 181k images
+sbatch slurm/probe_curves.sbatch --dataset chexpert
+```
+
 ## 📊 Results
 
 The full grid is running on the Explorer cluster under the protocol above. The results table, with 95% CIs and the Holm-corrected comparisons from `compare_models.py`, will be added here when the runs finish.
@@ -241,11 +265,15 @@ The full grid is running on the Explorer cluster under the protocol above. The r
 ```
 ├── run_experiment.py          # run one model on one dataset (all subset draws)
 ├── compare_models.py          # results table with CIs + planned comparisons
+├── extract_features.py        # cache frozen-backbone features for the probe models
+├── probe_curves.py            # data-efficiency curves from the cached features
 ├── requirements.txt
 ├── data.py, main.py, train.py, evaluate.py   # earlier course-version scripts, not used by run_experiment.py
 ├── slurm/
 │   ├── setup_env.sh           # one-time environment build on Explorer
 │   ├── run_experiment.sbatch  # GPU job for run_experiment.py
+│   ├── extract_features.sbatch  # GPU job for extract_features.py
+│   ├── probe_curves.sbatch    # CPU job for probe_curves.py
 │   └── submit_queue.sh        # submits queued jobs within the QOS limits
 ├── src/
 │   ├── protocol.py            # model grid, shared protocol, per-dataset settings, comparisons

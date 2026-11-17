@@ -61,14 +61,15 @@ def kfold_history_stats(
     return stats
 
 
-def _style_axis(ax, title: str, ylabel: str):
+def _style_axis(ax, title: str, ylabel: str, xlabel: str = "Epoch", integer_x: bool = True):
     ax.set_facecolor(SURFACE)
     ax.set_title(title, fontsize=12, color=TEXT, loc="left")
-    ax.set_xlabel("Epoch", color=TEXT_MUTED)
+    ax.set_xlabel(xlabel, color=TEXT_MUTED)
     ax.set_ylabel(ylabel, color=TEXT_MUTED)
     ax.grid(True, color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
-    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    if integer_x:
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
@@ -172,6 +173,76 @@ def plot_kfold_test_results(
     ax.set_xlabel("")
     suptitle = f"{title} - " if title else ""
     ax.set_title(f"{suptitle}test metrics per fold (dots) and mean ± 1 SD", fontsize=12, color=TEXT, loc="left")
+    fig.tight_layout()
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight", facecolor=SURFACE)
+    return fig
+
+
+# One fixed color and marker per probe model, so identity never rests on color alone
+MODEL_STYLES = {
+    "B_imagenet_probe": ("#2a78d6", "o", "ImageNet DenseNet-121"),
+    "C0_siglip_probe": ("#eb6834", "s", "SigLIP"),
+    "C_medsiglip_probe": ("#1f9e6e", "^", "MedSigLIP"),
+}
+PAIR_LINESTYLES = ("-", "--", ":")
+
+
+def _size_axis(ax, n):
+    """Log x axis labelled with the training-set sizes themselves."""
+    ax.set_xscale("log")
+    ax.set_xticks(n)
+    ax.set_xticklabels([f"{v:,}" for v in n], fontsize=8)
+    ax.minorticks_off()
+
+
+def plot_data_efficiency(
+    curves: Dict,
+    metrics: Sequence[str] = ("test_auc", "test_balanced_acc"),
+    title: Optional[str] = None,
+    save_path: Optional[str] = None,
+):
+    """
+    Test score against training-set size (probe_curves.py output), mean over draws with the 95% CI band
+    (test set + draws), plus a panel with how often a single draw orders each model pair as the mean does.
+    """
+    sizes = list(curves["sizes"].values())
+    n = np.array([s["n_train"] for s in sizes])
+    fig, axes = plt.subplots(1, len(metrics) + 1, figsize=(5.2 * (len(metrics) + 1), 4.2), facecolor=SURFACE)
+
+    for ax, metric in zip(axes, metrics):
+        for m in curves["models"]:
+            color, marker, label = MODEL_STYLES.get(m, (TEXT_MUTED, "o", m))
+            rs = [s["models"][m][metric] for s in sizes]
+            mean = np.array([r["mean"] for r in rs])
+            lo, hi = np.array([r["ci_total"] for r in rs]).T
+            ax.fill_between(n, lo, hi, color=color, alpha=0.12, linewidth=0)
+            ax.plot(n, mean, color=color, linewidth=2, marker=marker, markersize=6, markeredgecolor=SURFACE,
+                    label=label, solid_capstyle="round")
+        _size_axis(ax, n)
+        _style_axis(ax, METRIC_LABELS.get(metric, metric), METRIC_LABELS.get(metric, metric),
+                    xlabel="Training images", integer_x=False)
+        ax.legend(frameon=False, labelcolor=TEXT, fontsize=9)
+
+    ax = axes[-1]
+    pairs = [(c["a"], c["b"]) for c in sizes[0]["comparisons"]["test_auc"]]
+    for (a, b), ls in zip(pairs, PAIR_LINESTYLES):
+        agree = [next(c for c in s["comparisons"]["test_auc"] if (c["a"], c["b"]) == (a, b))["draw_agreement"]
+                 for s in sizes]
+        ax.plot(n, agree, color=MODEL_STYLES.get(a, (TEXT,))[0], linestyle=ls, linewidth=2, marker="o", markersize=5,
+                markeredgecolor=SURFACE,
+                label=f"{MODEL_STYLES.get(a, (0, 0, a))[2]} vs {MODEL_STYLES.get(b, (0, 0, b))[2]}")
+    ax.axhline(0.5, color=TEXT_MUTED, linewidth=1, linestyle=(0, (2, 3)))
+    _size_axis(ax, n)
+    ax.set_ylim(0, 1.05)
+    _style_axis(ax, "Single-draw agreement (AUC)", "Share of draws agreeing with the mean",
+                xlabel="Training images", integer_x=False)
+    ax.legend(frameon=False, labelcolor=TEXT, fontsize=9)
+
+    suptitle = f"{title} - " if title else ""
+    fig.suptitle(f"{suptitle}linear probes on frozen features, mean and 95% CI over subset draws", fontsize=13,
+                 color=TEXT, x=0.01, ha="left")
     fig.tight_layout()
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)

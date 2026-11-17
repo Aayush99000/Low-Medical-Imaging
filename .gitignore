@@ -168,3 +168,7 @@ DS_project_images/
 
 # Slurm job logs
 logs/
+
+# Cached features and probe-curve outputs (large; regenerate with extract_features.py / probe_curves.py)
+features/
+experiments_curves/

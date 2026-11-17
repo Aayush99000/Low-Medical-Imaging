@@ -25,15 +25,20 @@ from src.utils.stats_utils import BOOTSTRAP_METRICS, bootstrap_test_metric
 from src.utils.subset_utils import create_subset_indices
 
 
-def parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_data_args(p):
+    """Dataset choice and locations, shared with extract_features.py and probe_curves.py."""
     p.add_argument("--dataset", choices=["pneumonia", "ham10000", "chexpert"], required=True)
-    p.add_argument("--model", choices=sorted(MODEL_ZOO), required=True)
     p.add_argument("--pneumonia_root", default="chest_xray_pheumonia/chest_xray")
     p.add_argument("--ham_metadata", default="HAM10000_Dataset/metadata/HAM10000_metadata.csv")
     p.add_argument("--ham_image_dirs", nargs="+", default=["HAM10000_Dataset/train_dir", "HAM10000_Dataset/val_dir"])
     p.add_argument("--chexpert_root", default="CheXpert_Dataset", help="folder with train.csv, valid.csv, train/, valid/")
     p.add_argument("--chexpert_task", default="Pleural Effusion", help="one CheXpert finding (a train.csv column)")
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_data_args(p)
+    p.add_argument("--model", choices=sorted(MODEL_ZOO), required=True)
     p.add_argument("--out_dir", default="experiments")
     p.add_argument("--device", default=None, help="cuda / mps / cpu (default: best available)")
     p.add_argument("--num_workers", type=int, default=2)
