@@ -260,6 +260,39 @@ sbatch slurm/probe_curves.sbatch --dataset chexpert
 
 The full grid is running on the Explorer cluster under the protocol above. The results table, with 95% CIs and the Holm-corrected comparisons from `compare_models.py`, will be added here when the runs finish.
 
+### Data-efficiency curves (linear probes)
+
+Test AUC by training-set size from `probe_curves.py`. Each value is the mean over 20 subset draws; 10,000 images and HAM10000's whole pool use 5 draws, and pneumonia's whole pool is one fixed training set. Differences are paired over the same subsets and test images. `*` marks Holm-adjusted p < 0.05 (the bootstrap floor is 0.006). The figure in brackets is the share of single draws that order the pair the same way as the mean.
+
+| Dataset | n | ImageNet DenseNet-121 | SigLIP | MedSigLIP | MedSigLIP − SigLIP | SigLIP − ImageNet |
+|---|---:|---:|---:|---:|---:|---:|
+| Pneumonia | 25 | 0.915 | 0.906 | 0.956 | +0.049* (0.95) | −0.009 (0.65) |
+| | 100 | 0.950 | 0.941 | 0.977 | +0.036* (1.00) | −0.009 (0.80) |
+| | 300 | 0.954 | 0.949 | 0.982 | +0.033* (1.00) | −0.005 (0.65) |
+| | 1,000 | 0.961 | 0.954 | 0.984 | +0.030* (1.00) | −0.007 (0.80) |
+| | 5,216 (all) | 0.964 | 0.948 | 0.983 | +0.034* | −0.015* |
+| HAM10000 | 50 | 0.746 | 0.855 | 0.848 | −0.008 (0.75) | +0.109* (1.00) |
+| | 100 | 0.791 | 0.878 | 0.874 | −0.003 (0.60) | +0.086* (1.00) |
+| | 300 | 0.826 | 0.902 | 0.898 | −0.004 (0.65) | +0.076* (1.00) |
+| | 1,000 | 0.879 | 0.928 | 0.932 | +0.004 (0.80) | +0.049* (1.00) |
+| | 6,403 (all) | 0.931 | 0.956 | 0.958 | +0.002 (0.80) | +0.025* (1.00) |
+| CheXpert | 25 | 0.684 | 0.680 | 0.835 | +0.155* (1.00) | −0.003 (0.45) |
+| | 100 | 0.766 | 0.743 | 0.877 | +0.134* (1.00) | −0.023 (0.65) |
+| | 300 | 0.810 | 0.784 | 0.904 | +0.119* (1.00) | −0.026 (0.80) |
+| | 1,000 | 0.840 | 0.803 | 0.909 | +0.106* (1.00) | −0.036 (0.95) |
+| | 62,761 (all) | 0.864 | 0.842 | 0.928 | +0.086* (1.00) | −0.022 (1.00) |
+
+HAM10000 has no n=25 row: 25 images can't hold the 5-per-class minimum for 7 classes. CheXpert's pool keeps one image per patient.
+
+- **Chest X-rays:** MedSigLIP beats both general models at every size. On CheXpert the gap is largest at 25 images (+0.15 AUC) and narrows to +0.09 on the whole pool. MedSigLIP's pretraining includes MIMIC-CXR but not CheXpert or the pneumonia set, so this reflects a modality match, not test-set leakage.
+- **Dermoscopy:** MedSigLIP and SigLIP can't be told apart at any size. Both beat ImageNet DenseNet-121, and that gap shrinks from +0.11 to +0.03 as data grows. MedSigLIP's dermatology data is clinical and consumer photos, not dermoscopy.
+- **Single runs are unreliable for small gaps.** SigLIP vs ImageNet on the chest datasets is never significant below the whole pool. At ≤100 images, a single draw orders the pair the same way as the mean only 45–80% of the time, so a one-subset experiment could report either model as better.
+- **Probe choice:** at n=300 the cached logistic regression agrees with the main protocol's MLP probe within 0.017 AUC on the chest datasets. On HAM10000 it is 0.013–0.026 higher; the model ranking is the same.
+
+![Pneumonia data-efficiency curves](images/pneumonia_curves.png)
+![HAM10000 data-efficiency curves](images/ham10000_curves.png)
+![CheXpert data-efficiency curves](images/chexpert_curves.png)
+
 ## 📁 Project Structure
 
 ```
