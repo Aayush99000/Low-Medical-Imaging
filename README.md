@@ -121,6 +121,20 @@ Softmax turns the logits into probabilities, and the loss is cross-entropy (clas
 
 *Illustrative diagram of the MedSigLIP linear probe from the original course report. Current setup: 448×448 input, 1152-d features, and the head shown above.*
 
+**Two more general / medical pairs, for the linear-probe curves only.** Each pair shares an architecture, so the only difference is the pretraining data. They run at 448 like every other model.
+
+| Model | Backbone | Pretraining | Features |
+|---|---|---|---|
+| D0_dinov2_probe | DINOv2 ViT-B/14 (`facebook/dinov2-base`) | Natural images (self-supervised) | 768-d CLS token |
+| D_raddino_probe | RAD-DINO (`microsoft/rad-dino`), DINOv2-B further trained on chest X-rays | MIMIC-CXR, CheXpert, NIH ChestX-ray14, PadChest, BRAX | 768-d CLS token |
+| E0_clip_probe | OpenAI CLIP ViT-B/16 (`openai/clip-vit-base-patch16`) | Web image–text pairs | 512-d image embedding |
+| E_biomedclip_probe | BiomedCLIP ViT-B/16 (open_clip, `microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224`) | PMC-15M, figure–caption pairs from PubMed Central | 512-d image embedding |
+
+- **Normalization:** DINOv2 uses ImageNet statistics and RAD-DINO its own (mean 0.5307, std 0.2583). Both CLIP models use OpenAI CLIP's.
+- **Position embeddings:** CLIP, BiomedCLIP and SigLIP are interpolated from their native size to 448. DINOv2 interpolates at any size.
+- **BiomedCLIP** needs `open_clip_torch` and `timm`.
+- **RAD-DINO saw our CheXpert test images during pretraining.** Its training list ([`training_images.csv`](https://huggingface.co/microsoft/rad-dino/blob/main/training_images.csv)) includes all 200 CheXpert validation patients, which make up our CheXpert test set. It saw the images but not the labels. Its CheXpert results are reported with that caveat. The pneumonia and HAM10000 test sets are not in its training data.
+
 ## 🛠️ Pipeline
 
 1. **Data** (`src/data/`) — Chest X-ray, HAM10000 and CheXpert datasets (lesion-grouped HAM10000 splits, patient-level CheXpert splits) with built-in augmentation
@@ -130,7 +144,7 @@ Softmax turns the logits into probabilities, and the loss is cross-entropy (clas
 5. **Statistics** (`src/utils/stats_utils.py`, `compare_models.py`) — bootstrap CIs, DeLong's test, paired comparisons with Holm correction
 6. **Plots** (`src/utils/plot_utils.py`) — training curves, per-fold test results and data-efficiency curves
 7. **Runner** (`run_experiment.py`) — runs one model on one dataset under the shared protocol; `compare_models.py` then builds the results table and runs the planned comparisons
-8. **Data-efficiency curves** (`extract_features.py`, `probe_curves.py`) — linear probes on cached frozen features across training-set sizes (see below)
+8. **Data-efficiency curves** (`extract_features.py`, `probe_curves.py`, `reliability.py`) — linear probes on cached frozen features across training-set sizes, and how reliable one low-data comparison is (see below)
 
 ```bash
 python run_experiment.py --dataset pneumonia --model B_imagenet_probe
@@ -152,14 +166,23 @@ A frozen backbone gives the same features in every epoch, so the linear-probe mo
 1. `extract_features.py` runs each probe model's frozen backbone once over the whole training pool and the test set (protocol resolution and normalization, no augmentation) and caches the features in `features/`.
 2. `probe_curves.py` fits an L2 logistic regression per model, training-set size (25 to the whole pool) and subset draw (20 per size; 5 above 3,000 images), with C chosen by stratified 5-fold CV on log-loss. Subsets come from the same samplers as `run_experiment.py`, so every model sees the same images and the n=300 draws 0–4 are the subsets of the main probe runs; the script compares the two at n=300.
 
-Per size it reports each model's test AUC and balanced accuracy with 95% CIs (test set + draws), the paired comparisons with Holm correction, and how often a single draw orders each pair the same way as the mean over draws.
+Per size it reports each model's test AUC and balanced accuracy with 95% CIs (test set + draws), the paired comparisons with Holm correction, and how often a single draw orders each pair the same way as the mean over draws. The comparisons are the three medical − general pairs and SigLIP / MedSigLIP vs ImageNet DenseNet-121.
+
+3. `reliability.py` treats each draw as one study and asks how far a single study can be trusted, for every pair of probe models:
+   - **Where the uncertainty comes from.** It splits a single study's variance into the training-subset part (spread between draws on the same test set) and the test-set part (bootstrap of the test cases within a draw).
+   - **How often a study gets the order right.** It checks whether one study, or the mean of k studies, orders the pair the same way as the mean of the other draws.
+   - **How often a study's own test-set CI misleads.** It counts studies whose CI calls the difference significant, in the right or the wrong direction.
 
 ```bash
 python extract_features.py --dataset pneumonia --model C_medsiglip_probe      # once per probe model
 python probe_curves.py --dataset pneumonia                                    # CPU only, minutes
+python reliability.py                                                         # after the curves of every dataset
 ```
 
-Outputs go to `experiments_curves/`: `<dataset>_curves.json`, `<dataset>_curves.png` and the test predictions for every size and draw.
+Outputs go to `experiments_curves/`:
+- `<dataset>_curves.json`, plus the `<dataset>_curves.png` (AUC) and `<dataset>_curves_balanced_acc.png` figures;
+- the test predictions for every size and draw;
+- `reliability.json` / `.csv` and the `reliability_variance.png` / `reliability_agreement.png` figures.
 
 ## 🚀 Quick Start
 
@@ -254,6 +277,7 @@ For the data-efficiency curves, cache each probe model's features on a GPU node,
 ```bash
 sbatch slurm/extract_features.sbatch --dataset chexpert --model C_medsiglip_probe   # ~1h10m on a V100 for CheXpert's 181k images
 sbatch slurm/probe_curves.sbatch --dataset chexpert
+sbatch --partition=short --cpus-per-task=4 --mem=16G --time=01:00:00 --wrap "MPLBACKEND=Agg /scratch/$USER/envs/lowmed/bin/python reliability.py"
 ```
 
 ## 📊 Results
@@ -262,36 +286,92 @@ The full grid is running on the Explorer cluster under the protocol above. The r
 
 ### Data-efficiency curves (linear probes)
 
-Test AUC by training-set size from `probe_curves.py`. Each value is the mean over 20 subset draws; 10,000 images and HAM10000's whole pool use 5 draws, and pneumonia's whole pool is one fixed training set. Differences are paired over the same subsets and test images. `*` marks Holm-adjusted p < 0.05 (the bootstrap floor is 0.006). The figure in brackets is the share of single draws that order the pair the same way as the mean.
+Test AUC by training-set size from `probe_curves.py`, for the seven probe models: ImageNet DenseNet-121 and three architecture-matched general / medical pairs.
+- **Draws:** each value is the mean over 20 subset draws. Sizes of 10,000 images and HAM10000's whole pool use 5 draws, and pneumonia's whole pool is one fixed training set.
+- **Pools:** HAM10000 has no n=25 row, because 25 images can't hold the 5-per-class minimum for 7 classes. CheXpert's pool keeps one image per patient.
 
-| Dataset | n | ImageNet DenseNet-121 | SigLIP | MedSigLIP | MedSigLIP − SigLIP | SigLIP − ImageNet |
-|---|---:|---:|---:|---:|---:|---:|
-| Pneumonia | 25 | 0.915 | 0.906 | 0.956 | +0.049* (0.95) | −0.009 (0.65) |
-| | 100 | 0.950 | 0.941 | 0.977 | +0.036* (1.00) | −0.009 (0.80) |
-| | 300 | 0.954 | 0.949 | 0.982 | +0.033* (1.00) | −0.005 (0.65) |
-| | 1,000 | 0.961 | 0.954 | 0.984 | +0.030* (1.00) | −0.007 (0.80) |
-| | 5,216 (all) | 0.964 | 0.948 | 0.983 | +0.034* | −0.015* |
-| HAM10000 | 50 | 0.746 | 0.855 | 0.848 | −0.008 (0.75) | +0.109* (1.00) |
-| | 100 | 0.791 | 0.878 | 0.874 | −0.003 (0.60) | +0.086* (1.00) |
-| | 300 | 0.826 | 0.902 | 0.898 | −0.004 (0.65) | +0.076* (1.00) |
-| | 1,000 | 0.879 | 0.928 | 0.932 | +0.004 (0.80) | +0.049* (1.00) |
-| | 6,403 (all) | 0.931 | 0.956 | 0.958 | +0.002 (0.80) | +0.025* (1.00) |
-| CheXpert | 25 | 0.684 | 0.680 | 0.835 | +0.155* (1.00) | −0.003 (0.45) |
-| | 100 | 0.766 | 0.743 | 0.877 | +0.134* (1.00) | −0.023 (0.65) |
-| | 300 | 0.810 | 0.784 | 0.904 | +0.119* (1.00) | −0.026 (0.80) |
-| | 1,000 | 0.840 | 0.803 | 0.909 | +0.106* (1.00) | −0.036 (0.95) |
-| | 62,761 (all) | 0.864 | 0.842 | 0.928 | +0.086* (1.00) | −0.022 (1.00) |
+| Dataset | n | ImageNet DenseNet-121 | SigLIP | MedSigLIP | DINOv2 | RAD-DINO | CLIP | BiomedCLIP |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Pneumonia | 25 | 0.915 | 0.906 | 0.956 | 0.854 | 0.960 | 0.885 | 0.932 |
+|  | 100 | 0.950 | 0.941 | 0.977 | 0.922 | 0.984 | 0.911 | 0.963 |
+|  | 300 | 0.954 | 0.949 | 0.982 | 0.946 | 0.991 | 0.919 | 0.969 |
+|  | 1,000 | 0.961 | 0.954 | 0.984 | 0.955 | 0.993 | 0.932 | 0.972 |
+|  | 5,216 (all) | 0.964 | 0.949 | 0.983 | 0.964 | 0.995 | 0.944 | 0.971 |
+| HAM10000 | 50 | 0.746 | 0.855 | 0.848 | 0.805 | 0.732 | 0.810 | 0.811 |
+|  | 100 | 0.791 | 0.878 | 0.874 | 0.838 | 0.763 | 0.841 | 0.836 |
+|  | 300 | 0.826 | 0.902 | 0.898 | 0.864 | 0.783 | 0.866 | 0.850 |
+|  | 1,000 | 0.879 | 0.928 | 0.932 | 0.898 | 0.830 | 0.903 | 0.875 |
+|  | 6,403 (all) | 0.931 | 0.956 | 0.958 | 0.937 | 0.874 | 0.939 | 0.897 |
+| CheXpert | 25 | 0.684 | 0.680 | 0.835 | 0.688 | 0.648† | 0.632 | 0.742 |
+|  | 100 | 0.766 | 0.743 | 0.877 | 0.702 | 0.721† | 0.690 | 0.782 |
+|  | 300 | 0.810 | 0.784 | 0.904 | 0.758 | 0.787† | 0.740 | 0.804 |
+|  | 1,000 | 0.840 | 0.803 | 0.909 | 0.788 | 0.839† | 0.769 | 0.820 |
+|  | 62,761 (all) | 0.864 | 0.843 | 0.928 | 0.858 | 0.891† | 0.825 | 0.856 |
 
-HAM10000 has no n=25 row: 25 images can't hold the 5-per-class minimum for 7 classes. CheXpert's pool keeps one image per patient.
+† RAD-DINO saw the CheXpert test images, without labels, during pretraining (see [Models](#-models)).
 
-- **Chest X-rays:** MedSigLIP beats both general models at every size. On CheXpert the gap is largest at 25 images (+0.15 AUC) and narrows to +0.09 on the whole pool. MedSigLIP's pretraining includes MIMIC-CXR but not CheXpert or the pneumonia set, so this reflects a modality match, not test-set leakage.
-- **Dermoscopy:** MedSigLIP and SigLIP can't be told apart at any size. Both beat ImageNet DenseNet-121, and that gap shrinks from +0.11 to +0.03 as data grows. MedSigLIP's dermatology data is clinical and consumer photos, not dermoscopy.
-- **Single runs are unreliable for small gaps.** SigLIP vs ImageNet on the chest datasets is never significant below the whole pool. At ≤100 images, a single draw orders the pair the same way as the mean only 45–80% of the time, so a one-subset experiment could report either model as better.
-- **Probe choice:** at n=300 the cached logistic regression agrees with the main protocol's MLP probe within 0.017 AUC on the chest datasets. On HAM10000 it is 0.013–0.026 higher; the model ranking is the same.
+Paired differences in test AUC on the same subsets and test images. `*` marks Holm-adjusted p < 0.05 over the five comparisons per size; with 1,000 bootstrap resamples the smallest possible value is 0.010. The figure in brackets is the share of single draws that order the pair the same way as the mean.
+
+| Dataset | n | MedSigLIP − SigLIP | RAD-DINO − DINOv2 | BiomedCLIP − CLIP | SigLIP − ImageNet DenseNet-121 |
+|---|---:|---:|---:|---:|---:|
+| Pneumonia | 25 | +0.049* (0.95) | +0.106* (1.00) | +0.046* (0.90) | −0.009 (0.65) |
+|  | 100 | +0.036* (1.00) | +0.062* (1.00) | +0.052* (1.00) | −0.009 (0.80) |
+|  | 300 | +0.033* (1.00) | +0.045* (1.00) | +0.050* (1.00) | −0.005 (0.65) |
+|  | 1,000 | +0.030* (1.00) | +0.038* (1.00) | +0.040* (1.00) | −0.007 (0.80) |
+|  | 5,216 (all) | +0.034* | +0.032* | +0.027* | −0.015* |
+| HAM10000 | 50 | −0.008 (0.75) | −0.073* (1.00) | +0.002 (0.45) | +0.109* (1.00) |
+|  | 100 | −0.003 (0.60) | −0.075* (1.00) | −0.005 (0.55) | +0.086* (1.00) |
+|  | 300 | −0.004 (0.65) | −0.081* (1.00) | −0.015 (0.90) | +0.076* (1.00) |
+|  | 1,000 | +0.004 (0.80) | −0.068* (1.00) | −0.029* (1.00) | +0.049* (1.00) |
+|  | 6,403 (all) | +0.002 (0.80) | −0.063* (1.00) | −0.042* (1.00) | +0.025* (1.00) |
+| CheXpert | 25 | +0.155* (1.00) | −0.040† (0.75) | +0.109* (1.00) | −0.003 (0.45) |
+|  | 100 | +0.134* (1.00) | +0.019† (0.60) | +0.092* (1.00) | −0.023 (0.65) |
+|  | 300 | +0.119* (1.00) | +0.030† (0.65) | +0.064 (1.00) | −0.026 (0.80) |
+|  | 1,000 | +0.106* (1.00) | +0.051† (0.95) | +0.050 (0.95) | −0.036 (0.95) |
+|  | 62,761 (all) | +0.085* (1.00) | +0.033† (1.00) | +0.031 (1.00) | −0.021 (1.00) |
+
+- **Pediatric pneumonia:** medical pretraining helps in all three pairs at every size. The largest gap is RAD-DINO − DINOv2 at 25 images (+0.11 AUC).
+- **Dermoscopy (HAM10000):**
+  - MedSigLIP and SigLIP can't be told apart at any size; MedSigLIP's dermatology data is clinical and consumer photos, not dermoscopy.
+  - RAD-DINO, pretrained only on chest X-rays, is 0.06–0.08 below DINOv2 at every size.
+  - BiomedCLIP ties CLIP up to 300 images, and from 1,000 images general CLIP is significantly better. Within one pair, the verdict depends on how much data the study has.
+- **CheXpert:**
+  - MedSigLIP and BiomedCLIP lead most at small sizes, and the gaps narrow as data grows. MedSigLIP's pretraining includes MIMIC-CXR but not CheXpert or the pneumonia set, so its gain is a modality match, not test-set leakage.
+  - RAD-DINO is below DINOv2 at 25 images and above it from 100 images on. No size is significant after correction.
+- **Probe choice:** at n=300, the cached logistic regression agrees with the main protocol's MLP probe within 0.017 AUC on the chest datasets. On HAM10000 it is 0.013–0.026 higher; the model ranking is the same.
 
 ![Pneumonia data-efficiency curves](images/pneumonia_curves.png)
 ![HAM10000 data-efficiency curves](images/ham10000_curves.png)
 ![CheXpert data-efficiency curves](images/chexpert_curves.png)
+
+### How reliable is one low-data comparison?
+
+`reliability.py` treats each subset draw as one study. It runs over all 21 pairs of the seven probe models on each dataset, using test AUC.
+
+| Dataset | n | Training-subset SD | Test-set SE | Share of variance from the subset | Pair–sizes with single-study agreement < 0.8 |
+|---|---:|---:|---:|---:|---:|
+| Pneumonia | 25 | 0.045 | 0.012 | 0.93 | 6 / 21 |
+|  | 300 | 0.010 | 0.007 | 0.64 | 3 / 21 |
+|  | 3,000 | 0.005 | 0.006 | 0.34 | 1 / 21 |
+| HAM10000 | 50 | 0.017 | 0.013 | 0.70 | 5 / 21 |
+|  | 300 | 0.013 | 0.012 | 0.60 | 2 / 21 |
+|  | 3,000 | 0.008 | 0.009 | 0.43 | 1 / 21 |
+| CheXpert | 25 | 0.075 | 0.042 | 0.74 | 8 / 21 |
+|  | 300 | 0.037 | 0.034 | 0.50 | 9 / 21 |
+|  | 3,000 | 0.016 | 0.027 | 0.25 | 3 / 21 |
+
+SD and SE are medians over pairs, in AUC units, for one study's paired difference.
+
+- **At small sizes, the training subset matters more than the test set.** At 25–50 images, 69–93% of a single study's variance comes from which training images were drawn, so a CI over test cases alone is too narrow. From a few hundred images on, the test set dominates. CheXpert's 202-image test set is the limit there.
+- **Single studies often get the order wrong.**
+  - At n ≤ 100, one study orders the pair the same way as the held-out mean less than 95% of the time in 80 of 168 pair–sizes.
+  - In 42 of the 168, at least one study calls the difference significant in the wrong direction. Worst case, pneumonia at 25 images, ImageNet DenseNet-121 vs SigLIP: 30% of single studies are significant the wrong way and 40% the right way.
+- **Rankings flip with the training-set size.** For four model pairs, the sign of the mean difference reverses with |z| > 1 on both sides of the flip. Example: RAD-DINO leads BiomedCLIP on CheXpert from 1,000 images but trails it at 25–100.
+- **The risk is predictable.** If per-draw differences are normal, agreement follows from z = |mean difference| / SD between draws. That model fits the measured single-study agreement with a mean absolute error of 0.024 over 357 pair–sizes. The large misses (up to 0.37) are pairs with a mean difference near zero. There, the study and the reference split draws whose total is about zero, so they tend to have opposite signs.
+- **Averaging five draws removes most of the risk:** the median agreement of a 5-draw mean is 0.99–1.00 at every size.
+
+![Sources of variance in a single study](images/reliability_variance.png)
+![Agreement of one and five studies with the held-out mean](images/reliability_agreement.png)
 
 ## 📁 Project Structure
 
@@ -300,6 +380,7 @@ HAM10000 has no n=25 row: 25 images can't hold the 5-per-class minimum for 7 cla
 ├── compare_models.py          # results table with CIs + planned comparisons
 ├── extract_features.py        # cache frozen-backbone features for the probe models
 ├── probe_curves.py            # data-efficiency curves from the cached features
+├── reliability.py             # how reliable a single low-data comparison is, from the curve predictions
 ├── requirements.txt
 ├── data.py, main.py, train.py, evaluate.py   # earlier course-version scripts, not used by run_experiment.py
 ├── slurm/

@@ -13,7 +13,8 @@ Examples:
     python probe_curves.py --dataset chexpert --sizes 25 50 100 300 1000 --n_draws 20 --n_jobs 32
 
 Outputs in --out_dir: <dataset>_<model>_n<size>_curve_predictions.npz (labels, probs (draws, N, C)),
-<dataset>_curves.json (per-size results and comparisons) and <dataset>_curves.png.
+<dataset>_curves.json (per-size results and comparisons), <dataset>_curves.png (AUC) and
+<dataset>_curves_balanced_acc.png. reliability.py analyses these outputs further.
 '''
 import argparse
 import contextlib
@@ -31,8 +32,11 @@ from src.protocol import DATASET_PROTOCOL, PROTOCOL
 from src.utils.plot_utils import plot_data_efficiency
 from src.utils.stats_utils import bootstrap_test_metric, compare_models_on_test, holm_adjust
 
-# medical vs general pretraining (same SigLIP-400M architecture), and each SigLIP vs the ImageNet DenseNet
+# Medical vs general pretraining with the architecture fixed (SigLIP-400M, DINOv2 ViT-B/14, CLIP ViT-B/16), and each
+# SigLIP vs the ImageNet DenseNet. The pairs whose models are both cached are Holm-corrected together per size.
 PAIRS = (("C_medsiglip_probe", "C0_siglip_probe"),
+         ("D_raddino_probe", "D0_dinov2_probe"),
+         ("E_biomedclip_probe", "E0_clip_probe"),
          ("C_medsiglip_probe", "B_imagenet_probe"),
          ("C0_siglip_probe", "B_imagenet_probe"))
 CURVE_METRICS = ("test_auc", "test_balanced_acc")
@@ -43,7 +47,7 @@ LARGE = 3000                      # sizes above this, and "all", get --n_draws_l
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_data_args(p)
-    p.add_argument("--models", nargs="+", choices=PROBE_MODELS, default=PROBE_MODELS)
+    p.add_argument("--models", nargs="+", choices=PROBE_MODELS, help="default: every probe model with a cache")
     p.add_argument("--features_dir", default="features")
     p.add_argument("--out_dir", default="experiments_curves")
     p.add_argument("--sizes", nargs="+", default=["25", "50", "100", "300", "1000", "3000", "10000", "all"],
@@ -173,7 +177,12 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = "_smoke" if args.smoke_test else ""
 
-    caches = {m: np.load(Path(args.features_dir) / f"{args.dataset}_{m}{suffix}_features.npz") for m in args.models}
+    cache_path = lambda m: Path(args.features_dir) / f"{args.dataset}_{m}{suffix}_features.npz"
+    if args.models is None:
+        args.models = [m for m in PROBE_MODELS if cache_path(m).exists()]
+        missing = sorted(set(PROBE_MODELS) - set(args.models))
+        print(f"[probe_curves] models: {', '.join(args.models)}" + (f" (no cache: {', '.join(missing)})" if missing else ""))
+    caches = {m: np.load(cache_path(m)) for m in args.models}
     first = caches[args.models[0]]
     for m, c in caches.items():
         if not (np.array_equal(c["pool_paths"], first["pool_paths"]) and np.array_equal(c["test_paths"], first["test_paths"])):
@@ -232,7 +241,8 @@ def main():
         cells = [f"{r['mean']:.3f} [{r['ci_total'][0]:.3f}, {r['ci_total'][1]:.3f}]"
                  for r in (c["models"][m]["test_auc"] for m in args.models)]
         print(f"{c['n_train']:>7d}" + "".join(f"{x:>30s}" for x in cells))
-    print(f"\nPaired differences in test AUC (Holm over {len(PAIRS)} per size); agree = share of single draws "
+    n_pairs = len(next(iter(curves["sizes"].values()))["comparisons"]["test_auc"]) if curves["sizes"] else 0
+    print(f"\nPaired differences in test AUC (Holm over {n_pairs} per size); agree = share of single draws "
           f"that order the pair as the mean does")
     for s, c in curves["sizes"].items():
         for comp in c["comparisons"]["test_auc"]:
@@ -245,8 +255,11 @@ def main():
 
     with open(out_dir / f"{args.dataset}{suffix}_curves.json", "w") as f:
         json.dump(curves, f, indent=2)
-    plot_data_efficiency(curves, title=args.dataset, save_path=out_dir / f"{args.dataset}{suffix}_curves.png")
-    print(f"\nSaved {args.dataset}{suffix}_curves.json / .png and the per-size predictions to {out_dir}")
+    for metric, tag in (("test_auc", ""), ("test_balanced_acc", "_balanced_acc")):
+        plot_data_efficiency(curves, metric=metric, pairs=PAIRS, title=args.dataset,
+                             save_path=out_dir / f"{args.dataset}{suffix}_curves{tag}.png")
+    print(f"\nSaved {args.dataset}{suffix}_curves.json, the AUC and balanced-accuracy figures and the per-size "
+          f"predictions to {out_dir}")
 
 
 if __name__ == "__main__":

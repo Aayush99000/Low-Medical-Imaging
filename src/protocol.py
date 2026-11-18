@@ -3,7 +3,9 @@
 # Which models are compared. Each pretraining comparison keeps the architecture fixed:
 #   DenseNet-121:     random init (A)        vs ImageNet (B)
 #   SigLIP-400M ViT:  general SigLIP (C0)    vs MedSigLIP (C)   <- domain-specific vs general pretraining
-# Every pretrained backbone is run in both regimes, so the regime is never mixed up with the pretraining.
+#   DINOv2 ViT-B/14:  general DINOv2 (D0)    vs RAD-DINO (D)    <- linear probe only, for probe_curves.py
+#   CLIP ViT-B/16:    OpenAI CLIP (E0)       vs BiomedCLIP (E)  <- linear probe only, for probe_curves.py
+# The DenseNet and SigLIP backbones are run in both regimes, so the regime is never mixed up with the pretraining.
 MODEL_ZOO = {
     "A_scratch":            {"backbone": "densenet121", "weights": None,       "regime": "full_finetune"},
     "B_imagenet_probe":     {"backbone": "densenet121", "weights": "imagenet", "regime": "linear_probe"},
@@ -12,6 +14,10 @@ MODEL_ZOO = {
     "C0_siglip_finetune":   {"backbone": "siglip",      "weights": "general",  "regime": "full_finetune"},
     "C_medsiglip_probe":    {"backbone": "medsiglip",   "weights": "medical",  "regime": "linear_probe"},
     "C_medsiglip_finetune": {"backbone": "medsiglip",   "weights": "medical",  "regime": "full_finetune"},
+    "D0_dinov2_probe":      {"backbone": "dinov2",      "weights": "general",  "regime": "linear_probe"},
+    "D_raddino_probe":      {"backbone": "raddino",     "weights": "medical",  "regime": "linear_probe"},
+    "E0_clip_probe":        {"backbone": "clip",        "weights": "general",  "regime": "linear_probe"},
+    "E_biomedclip_probe":   {"backbone": "biomedclip",  "weights": "medical",  "regime": "linear_probe"},
 }
 
 # Identical for every model. Per-model differences are limited to the backbone and its pretrained weights.
